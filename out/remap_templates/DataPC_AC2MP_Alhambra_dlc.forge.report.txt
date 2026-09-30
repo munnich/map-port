@@ -1,0 +1,108 @@
+    16  additional world data: Chest Capture spawn points
+          - Chest_Spawn, Chest_Spawn_001, Chest_Spawn_002, Chest_Spawn_003, Chest_Spawn_004, Chest_Spawn_005, Chest_Spawn_006, Chest_Spawn_007
+     1  additional world data: DLC element added to DLCPackageDescriptor
+     4  additional world data: Escort (TeamVIP) paths
+  1415  converted:rewritten
+  4614  converted:unchanged
+  1577  duplicate copies (converted once, written to all)
+     3  encode-failed->ACB copy:Skeleton
+          - Human Body: 'Skeleton.Bones[10]<Bone>.Modifiers[0]<CompressBoneModifier>.OffsetBone1: missing field required by target schema'
+          - human_cape_right: 'Skeleton.Bones[8]<Bone>.Modifiers[0]<HingeBoneModifier>.Constraints[0]<Hinge>.InitialLocalPosition: missing field required by target schema'
+          - Horse_With_Cloth: 'Skeleton.Bones[7]<Bone>.Modifiers[0]<CompressBoneModifier>.OffsetBone1: missing field required by target schema'
+    16  filters: -> gamemode_teamwanted
+    61  filters: cleared (standard modes)
+    95  filters: left on ACR-only layers (object never loaded)
+    26  layers: ACR-only layer associations removed
+    16  layers: chest-only objects -> gamemode_teamwanted
+    95  layers: objects only in ACR-only modes (never loaded)
+          - ACFE_Dyers_OOB_Deathmatch_Olivery_001
+          - ACFE_Dyers_OOB_Deathmatch_Olivery_FX_001
+          - TrainingMode_Spawn
+          - TrainingMode_Spawn_001
+          - TrainingMode_Spawn_002
+          - TrainingMode_Spawn_003
+          - TrainingMode_Spawn_004
+          - TrainingMode_Spawn_005
+          - TrainingMode_Spawn_006
+          - TrainingMode_Spawn_007
+          - CTF_border
+          - CTF_Border_End_01
+    61  layers: standard-mode objects -> top grid cell
+     1  layers: top grid cell = Cell00084_DataBlock
+     4  opaque-kept-ACR:FX
+          - ACFE_FX_Rot_Wheel
+          - ACFE_FX_Elevator_Activate
+          - ACFE_FX_Elevator_Loop
+          - ACFE_FFX_Red_White_Switch
+    12  opaque-kept-ACR:MaterialTemplate
+          -  ACFE_Realtree
+          - ACFE_Tex1_PixelLit
+          - ACFE_WaterSea
+          - ACFE_Windows_PixelLit
+          - ACFE_Tex2_PixelLit
+          - ACFE_Tex1_VertexLit
+          - ACFE_Tex1_Unlit
+          - ACFE_Tex1_PixelLit_Specular_Cubemap
+          - ACFE_Tex1_PixelLit_VertexAnim
+          - ACFE_Tex1_VertexLit_LODFadeOut
+          - ACFE_Characters_Eye
+          - ACFE_FFX
+    21  opaque-kept-ACR:NavMeshManager
+          - NavMeshManager_00010
+          - NavMeshManager_00011
+          - NavMeshManager_00017
+          - NavMeshManager_00025
+          - NavMeshManager_00018
+          - NavMeshManager_00019
+          - NavMeshManager_00026
+          - NavMeshManager_00027
+          - NavMeshManager_00020
+          - NavMeshManager_00021
+          - NavMeshManager_00028
+          - NavMeshManager_00029
+     1  opaque-kept-ACR:PropertyControllerData
+          - ACFE_Dyers_TOD
+   868  opaque:Animation
+    38  opaque:FX
+    24  opaque:MaterialTemplate
+    21  opaque:NavMeshManager
+     1  opaque:PropertyControllerData
+     3  registration: took slot entry
+          - DLCPackageDescriptor
+          - MpWorld_Alhambra
+          - MpWorld_Alhambra_Night
+     4  registration: took slot image
+          - ac2mp_alhambra_topview_MapDesc
+          - ac2mp_img_alhambra_MapDesc
+          - AC2MP_ALH_Laod_Img_Big_Night_MapDesc
+          - AC2MP_ALH_Load_Img_Small_Night_MapDesc
+     1  registration: world renamed to AC2MP_Alhambra
+     2  stripped:CTFScoreZoneComponent
+     1  stripped:CTFWallComponent
+    36  stripped:ChaseBreakerComponent
+     2  stripped:FlagComponent
+     1  stripped:GameModeInfo
+    40  stripped:GcLMPCivilianSocialize
+    12  stripped:GcLMPRestObject
+     2  stripped:HijackComponent
+    12  stripped:OLMPRestObject
+   868  substituted-from-ACB:Animation
+    34  substituted-from-ACB:FX
+    12  substituted-from-ACB:MaterialTemplate
+     3  substituted-from-ACB:Skeleton
+     1  template NOT remapped (no ACB equivalent)
+          - ACFE_FFX (in forge)
+    13  template remapped
+          - ACFE_Characters_Eye -> AC2MP_Characters_Eye
+          - ACFE_Tex1_PixelLit -> AC2_Tex1_PixelLit
+          - ACFE_Tex1_PixelLit_VertexAnim -> AC2_Tex1_PixelLit_VertexAnim
+          - ACFE_Tex1_PixelLit_Specular_Cubemap -> AC2_Tex1_PixelLit_Specular_Cubemap
+          - ACFE_Tex1_Unlit -> AC2_Tex1_Unlit
+          - ACFE_Tex1_VertexLit -> AC2_Tex1_VertexLit
+          - ACFE_Tex1_VertexLit_LODFadeOut -> AC2_Tex1_VertexLit_LODFadeOut
+          - ACFE_Tex2_PixelLit -> AC2_Tex2_PixelLit
+          - ACFE_Windows_PixelLit -> AC2_Windows_PixelLit
+          - ACFE_Characters_Skin -> AC2MP_Characters_Skin
+          - ACFE_Characters_Body -> AC2MP_Characters_Body
+          - ACFE_Realtree -> AC2_Tex1_PixelLit_VertexAnim
+     4  world extras: TeamVIP paths captured

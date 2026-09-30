@@ -313,6 +313,12 @@ class Converter:
         return v
 
     # -- template remap --
+    # ACR templates with no ACB namesake -> what ACB's own equivalent materials use
+    # (ACB GEN_RT_* realtree materials: AC2_Tex1_PixelLit_VertexAnim; Venice's
+    # AC2MP_VEN_Water_Sea_01A: AC2MP_VEN_WaterSea_01a). ACFE_FFX is only used by
+    # CTF-layer materials, which the port never loads.
+    TEMPLATE_FALLBACKS = {"ACFE_Realtree": "AC2_Tex1_PixelLit_VertexAnim",
+                          "ACFE_WaterSea": "AC2MP_VEN_WaterSea_01a"}
     TEMPLATE_RENAMES = [("ACFE_Characters_", "AC2MP_Characters_"), ("ACFE_", "AC2_"), ("ACFE_", "AC2MP_")]
 
     def acb_object_by_name(self, name, types=("MaterialTemplate", "<entry>")):
@@ -341,6 +347,8 @@ class Converter:
                     target = self.acb_object_by_name(b + name[len(a):])
                     if target:
                         break
+            if not target and name in self.TEMPLATE_FALLBACKS:
+                target = self.acb_object_by_name(self.TEMPLATE_FALLBACKS[name])
             if target:
                 self.id_remap[tid] = target
                 self.r.add("template remapped", note=f"{name} -> {self.acb_idx[target][1]}")
