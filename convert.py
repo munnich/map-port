@@ -546,6 +546,71 @@ class Converter:
         return s_entries
 
 
+def vendor_dependencies(files, acb_dir, acb_idx, report):
+    """Retail map forges are self-contained: every entry's dependency table
+    only lists entries of the same forge (checked on retail Alhambra: 0 of
+    1749 point elsewhere). A dependency on an entry that lives in another
+    forge crashes ACB's loader (the streaming code walks dependency tables at
+    entry offset + 0x1b8), so copy every such entry in from the ACB forge that
+    has it, repeating until the dependency closure is in-forge."""
+    from anvilforge.forge import read_header
+    from anvilforge.fileset import iter_fileset_entries, read_entry_payload
+
+    def entry_id(df):
+        return derive_uid_and_ext(df.subs[0][2], True)[0] if df.subs else None
+
+    have = {entry_id(df) for df in files.values()}
+    while True:
+        missing = {}
+        for df in list(files.values()):
+            for d in df.deps:
+                lo = d.id & 0xFFFFFFFF
+                if lo not in have:
+                    missing.setdefault(lo, df.subs[0][1] if df.subs else "?")
+        if not missing:
+            return
+        by_forge = defaultdict(set)
+        for i in missing:
+            if i in acb_idx:
+                by_forge[acb_idx[i][2]].add(i)
+            else:
+                report.add("vendor: dependency NOT in ACB (left dangling)", note=f"{i:#x} <- {missing[i]}")
+                have.add(i)
+        for fg, want in by_forge.items():
+            with open(os.path.join(acb_dir, fg), "rb") as f:
+                for sidx in range(read_header(f, 25)):
+                    for e in list(iter_fileset_entries(f, sidx, True)):
+                        if e.id in want and e.id not in have:
+                            raw = read_entry_payload(f, e, True)
+                            files[f"vendor_-_{e.name}.data"] = DataFile(f"vendor_-_{e.name}.data", raw, Game.BROTHERHOOD)
+                            have.add(e.id)
+                            report.add("vendor: copied ACB entry into forge", note=f"{e.name} (from {fg})")
+            # ids that only exist as a sub-object inside some other entry:
+            # wrap a copy in an entry of its own so the dependency resolves
+            rest = want - have
+            if rest:
+                with open(os.path.join(acb_dir, fg), "rb") as f:
+                    for sidx in range(read_header(f, 25)):
+                        for e in list(iter_fileset_entries(f, sidx, True)):
+                            if not rest:
+                                break
+                            try:
+                                src = DataFile("", read_entry_payload(f, e, True), Game.BROTHERHOOD)
+                            except Exception:
+                                continue
+                            for ext, name, payload in src.subs:
+                                uid = derive_uid_and_ext(payload, True)[0]
+                                if uid in rest:
+                                    files[f"vendor_-_{name}.data"] = _new_datafile(
+                                        f"vendor_-_{name}.data", [[ext, name, payload]])
+                                    rest.discard(uid); have.add(uid)
+                                    report.add("vendor: wrapped ACB sub-object as own entry",
+                                               note=f"{name} (from {e.name} in {fg})")
+            for i in want - have:
+                report.add("vendor: NOT found in its forge", note=f"{i:#x} ({fg})")
+                have.add(i)
+
+
 def _new_datafile(fname, subs):
     df = DataFile.__new__(DataFile)
     df.fname, df.deps, df.raw_dep, df.subs = fname, [], b"", subs
@@ -640,6 +705,7 @@ def main():
     conv.encode_all(skip_types=("ContentPackage",) if args.slot else ())
     conv.substitute_opaque(files, args.acb_multi_dir)
     s_entries = conv.register_slot(files, args.acb_multi_dir, args.slot, work) if args.slot else []
+    vendor_dependencies(files, args.acb_multi_dir, conv.acb_idx, r)
 
     out_dir = os.path.join(work, "out")
     shutil.rmtree(out_dir, ignore_errors=True)

@@ -105,4 +105,14 @@
           - ACFE_Characters_Skin -> AC2MP_Characters_Skin
           - ACFE_Characters_Body -> AC2MP_Characters_Body
           - ACFE_Realtree -> AC2_Tex1_PixelLit_VertexAnim
+     3  vendor: copied ACB entry into forge
+          - AC2_Tex2_PixelLit (from DataPC_AC2MP_Alhambra_dlc.forge)
+          - AC2_Tex1_VertexLit_LODFadeOut (from DataPC_AC2MP_Alhambra_dlc.forge)
+          - AC2_Windows_PixelLit (from DataPC_AC2MP_Firenze.forge)
+     5  vendor: wrapped ACB sub-object as own entry
+          - AC2_Tex1_PixelLit_VertexAnim (from AC2MP_Alhambra in DataPC_AC2MP_Alhambra_dlc.forge)
+          - AC2_Tex1_PixelLit_Specular_Cubemap (from AC2MP_Alhambra in DataPC_AC2MP_Alhambra_dlc.forge)
+          - AC2_Tex1_Unlit (from Game Bootstrap Settings in DataPC.forge)
+          - AC2_Tex1_VertexLit (from Game Bootstrap Settings in DataPC.forge)
+          - AC2MP_Characters_Eye (from AC2MP_ID20_MainTemplate_Player in DataPC.forge)
      4  world extras: TeamVIP paths captured

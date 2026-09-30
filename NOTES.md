@@ -84,6 +84,15 @@ Naming: `ACR_Rome_Multi` = *Brotherhood's* Rome map (ACB codename "ACR"). Revela
   in-game stays "Alhambra"; acb2's diagnostics map-name table sees `AC2MP_Alhambra`.
 - A standalone new map would need a new UnlockableMap in MapManagerMulti (DataPC.forge) + own MpWorld/package.
 
+## Loader rule: dependencies must be in-forge
+
+Every entry's dependency table (u32 count + (id u32, flag u32) pairs at the start of the .data, i.e. entry offset +
+0x1b8 in the forge) may only list entries of the *same* forge — retail Alhambra: 1749/1749 in-forge. ACB's streaming
+code (ACBMP.exe 0x01b06b30, reached from 0x01b098a0) crashed walking a table that pointed at templates living in other
+forges. convert.py now vendors such entries (copies them, or wraps a sub-object copy as its own entry); `depcheck.py`
+verifies. In-game test 1 (default build) crashed in memcpy during load; test 2 (template remap, before vendoring)
+crashed in that loader.
+
 ## If the in-game test fails
 
 1. Crash while loading: rerun convert.py with `--remap-acfe-templates` (ACR shaders are the top suspect), then
