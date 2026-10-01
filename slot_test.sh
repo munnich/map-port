@@ -2,7 +2,7 @@
 # Swap a converted Dyers build into ACB's Alhambra DLC slot for testing, or put
 # the original back.
 #
-#   ./slot_test.sh install [VARIANT]   # VARIANT = default | remap_templates (a folder under out/)
+#   ./slot_test.sh install [VARIANT]   # VARIANT = default | remap_templates | control (a folder under out/; control = retail Alhambra round-tripped by roundtrip.py)
 #   ./slot_test.sh uninstall
 #   ./slot_test.sh status
 #
@@ -46,12 +46,12 @@ case "$ACTION" in
   status)
     cur="$(md5 "$TARGET")"; state="unknown file ($cur)"
     [ "$cur" = "$ORIG_MD5" ] && state="original"
-    for v in default remap_templates; do
+    for v in default remap_templates control; do
       p="$(variant_path "$v")"; [ -f "$p" ] && [ "$cur" = "$(md5 "$p")" ] && state="ported Dyers ($v)"
     done
     echo "game folder: $MULTI"
     echo "Alhambra slot: $state"
     [ -f "$BACKUP" ] && echo "backup: $BACKUP" || echo "backup: none yet"
     ;;
-  *) echo "usage: $0 install [default|remap_templates] | uninstall | status"; exit 1 ;;
+  *) echo "usage: $0 install [default|remap_templates|control] | uninstall | status"; exit 1 ;;
 esac

@@ -46,6 +46,7 @@ from anvilforge.datafile import (DATA_MAGIC, DATA_VERSIONS, _build_toc, _extra_f
                                  iter_datafile_subparts, object_id_bytes)
 from anvilforge.fastload import Codec, DecodeError, Handle, Obj, Ptr, Ref, Root, walk
 from anvilforge.fileset import loose_file_name
+from anvilforge.create_entry import create_entry
 from anvilforge.forge import repack, unpack
 from anvilforge.games import Game
 from anvilforge.schema import Schema
@@ -497,6 +498,18 @@ class Converter:
         self.slot_world_id = derive_uid_and_ext(sw[0].subs[sw[1]][2], True)[0]
         slot_addons = [(ext, n, p) for ext, n, p in sw[0].subs if ACB_T.name_of(ext) == "MpMapsDLCAddon"]
 
+        # ACR worlds carry an AutoLoad map sound bank with WwiseID 0 (Revelations loads map sound another way);
+        # ACB's have the map's bank there -- take the slot's
+        slot_world = acb.decode(sw[0].subs[sw[1]][2]).obj
+        def bank_ids(w):
+            comps = [c.obj for c in w.fields["Components"]
+                     if c.obj is not None and ACB_T.name_of(c.obj.type_hash) == "SoundBankWorldComponent"]
+            return [o for c in comps for o in walk(c) if ACB_T.name_of(o.type_hash) == "WwiseID"]
+        for ours, theirs in zip(bank_ids(world.obj), bank_ids(slot_world)):
+            if ours.fields.get("ShortID") == bytes(4):
+                ours.fields["ShortID"] = theirs.fields["ShortID"]
+                self.r.add("registration: sound bank id taken from slot world", note=theirs.fields["ShortID"].hex())
+
         # rename world + point DLCWorldComponent at the slot's addons
         wdf.subs[wi][1] = slot_world_name
         for c in world.obj.fields["Components"]:
@@ -549,6 +562,15 @@ class Converter:
                 files["slot_" + fn] = df
                 self.r.add("registration: took slot image", note=df.subs[0][1])
         return s_entries
+
+
+def retail_order(fn):
+    """Retail map forges are laid out MetaFile, World, Cell00084_DataBlock, ..., ContentPackage, MpWorlds + their
+    images: keep the source forge's own order, then entries we added, then the slot's registration entries."""
+    head = fn[len("slot_"):] if fn.startswith("slot_") else fn
+    idx = head.split("_-_", 1)[0]
+    rank = 2 if fn.startswith("slot_") else (0 if idx.isdigit() else 1)
+    return (rank, int(idx) if idx.isdigit() else 0, fn)
 
 
 def renumber_object(conv, files, old, new):
@@ -758,13 +780,22 @@ def main():
     for fn in os.listdir(src_dir):
         if fn.endswith(".MetaFile"):
             shutil.copy(os.path.join(src_dir, fn), os.path.join(out_dir, fn))
-    for n, (fn, df) in enumerate(sorted(files.items(), key=lambda kv: kv[0])):
+    for n, (fn, df) in enumerate(sorted(files.items(), key=lambda kv: retail_order(kv[0]))):
         base = fn[len("slot_"):] if fn.startswith("slot_") else fn
         base = base.split("_-_", 1)[1]
         if df.subs and ACB_T.name_of(df.subs[0][0]) == "World":
             base = df.subs[0][1] + ".data"
         open(os.path.join(out_dir, f"{n + 1}_-_{base}"), "wb").write(df.build(Game.BROTHERHOOD))
-    repack(out_dir, args.out_forge, Game.BROTHERHOOD, original_entries=list(entries) + list(s_entries),
+    # entries we added have no original metadata; create_entry() would derive a non-zero extension, retail map
+    # forges have 0 on every entry
+    known = {e.id for e in list(entries) + list(s_entries)}
+    added = []
+    for fn in os.listdir(out_dir):
+        e = create_entry(os.path.join(out_dir, fn), 0, Game.BROTHERHOOD)
+        if e is not None and e.id not in known:
+            e.extension = 0
+            added.append(e)
+    repack(out_dir, args.out_forge, Game.BROTHERHOOD, original_entries=list(entries) + list(s_entries) + added,
            align_entries=True)
     rep = r.text()
     open(args.out_forge + ".report.txt", "w").write(rep)

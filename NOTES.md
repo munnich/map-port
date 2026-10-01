@@ -117,6 +117,19 @@ table (the skins DLC packages carry every world's chest/escort data); later ones
 adds its own element, and Chest/Escort on the ported map currently use retail Alhambra's data (0x4fd98273 /
 0x4fd987d9, entity refs that don't exist in Dyers) -- expect those two modes to be broken until that is solved.
 
+## Test 5: still hangs before spawning (Wanted + Assassinate) -> retail conformance pass
+
+- Entry order: convert.py sorted output files as strings ("1000_-_" < "2_-_"), so the World sat at index 719. Retail
+  (and ACR) map forges: GlobalMetaFile, World, Cell00084_DataBlock, ..., ContentPackage, MpWorlds + images last.
+  `retail_order()` now keeps the source order, then added entries, then the slot's registration entries.
+- Entries we add got create_entry()'s derived `extension` (0xbcfb3c7a); retail map forges have 0 everywhere.
+- World SoundBankWorldComponent: ACR's AutoLoad bank has WwiseID 0; now the slot world's (Alhambra 0x6b041403).
+- Control build: `roundtrip.py` pushes retail Alhambra through the same writer (`out/control/`,
+  `slot_test.sh install control`). If the control hangs too, the writer (recompression is 53.8 MB vs retail 97.5 MB,
+  layout, metadata) is at fault, not Dyers' content.
+- Live inspection: /proc/<pid>/mem and /proc/<pid>/task/*/syscall are readable without stopping the game (Wine sets
+  PR_SET_PTRACER_ANY); a stack sampler scanning thread stacks for return addresses into ACBMP.exe works.
+
 ## If the in-game test fails
 
 1. Crash while loading: rerun convert.py with `--remap-acfe-templates` (ACR shaders are the top suspect), then
