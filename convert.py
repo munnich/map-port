@@ -722,7 +722,8 @@ def main():
         if df.subs and ACB_T.name_of(df.subs[0][0]) == "World":
             base = df.subs[0][1] + ".data"
         open(os.path.join(out_dir, f"{n + 1}_-_{base}"), "wb").write(df.build(Game.BROTHERHOOD))
-    repack(out_dir, args.out_forge, Game.BROTHERHOOD, original_entries=list(entries) + list(s_entries))
+    repack(out_dir, args.out_forge, Game.BROTHERHOOD, original_entries=list(entries) + list(s_entries),
+           align_entries=True)
     rep = r.text()
     open(args.out_forge + ".report.txt", "w").write(rep)
     print(rep)

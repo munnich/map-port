@@ -93,6 +93,17 @@ forges. convert.py now vendors such entries (copies them, or wraps a sub-object 
 verifies. In-game test 1 (default build) crashed in memcpy during load; test 2 (template remap, before vendoring)
 crashed in that loader.
 
+## Loader rule: entry headers must not straddle a streaming chunk
+
+`scimitar::BigFileAsynchStream::ExecutePrefetch` (Mac 0x1ce0c0) streams a forge in chunks aligned to 0x8000;
+`HandleChunkPrefetches` (Mac 0x1cf2b0, ACBMP.exe 0x01b06b30) then reads each started entry's dependency table *in
+place* at `chunk_buf + (entry_off - chunk_off) + 0x1b8`. A header + table running past the chunk end is read from
+unrelated memory -> huge "count" -> the entry's dep array (14-bit size) overflows -> memcpy crash at acbmp+0x1acdb03
+via 0x17877ec/0x1706f23 (tests 1 and 3), or a bad read at +0x1706f98 (test 2). Retail forges: every entry 16-aligned,
+0 headers straddle 0x10000 (one Alhambra entry straddles 0x8000). anvilforge's repack packed entries back to back
+(10-22 straddles); `repack(..., align_entries=True)` (anvilforge acr-port-decoder) now lays entries out retail-style.
+`aligncheck.py` verifies.
+
 ## If the in-game test fails
 
 1. Crash while loading: rerun convert.py with `--remap-acfe-templates` (ACR shaders are the top suspect), then
