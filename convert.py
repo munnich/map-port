@@ -7,7 +7,7 @@ Pipeline (see NOTES.md for how each rule was established):
      ACR-only object types are stripped (from arrays / pointers), and it is
      re-encoded with ACB's schema (placeholders filled from ACR), which drops
      every ACR-added field by construction. Missing ACB-only fields get
-     defaults (MeshShape.MoppCodeVersionNumber = 5). Mesh/TextureMap
+     defaults. MeshShape.MoppCodeVersionNumber = 0 makes ACB rebuild ACR's MOPPs at load. Mesh/TextureMap
      UserCategory is reset to 0 like ACB's own copies.
   2. Objects fastload can't decode (Animation, FX, MaterialTemplate, NavMesh,
      ...) are replaced by ACB's own bytes when ACB has the same object id,
@@ -480,8 +480,12 @@ class Converter:
     def patch_fields(self, obj: Obj):
         for o in walk(obj):
             t = ACR.name_of(o.type_hash)
-            if t == "MeshShape" and "MoppCodeVersionNumber" not in o.fields:
-                o.fields["MoppCodeVersionNumber"] = idb(5)
+            if t == "MeshShape":
+                # ACB's MeshShape::UpdateSDKObject trusts the stored MOPP only when MoppCodeVersionNumber == 5 and
+                # otherwise rebuilds it from the triangles with its own Havok compiler. ACR's MOPPs come from a
+                # different compiler (159/173 of the shapes both games ship differ) and leave collision holes in
+                # ACB (fell through Souk's ground, walked through Rhodes' buildings), so let ACB rebuild them all.
+                o.fields["MoppCodeVersionNumber"] = idb(0)
             if t in ("Mesh", "TextureMap") and "UserCategory" in o.fields:
                 o.fields["UserCategory"] = idb(0)
 

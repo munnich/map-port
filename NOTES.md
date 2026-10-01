@@ -50,8 +50,8 @@ Naming: `ACR_Rome_Multi` = *Brotherhood's* Rome map (ACB codename "ACR"). Revela
   Trioviz3DSettings.
 - Mesh/TextureMap `UserCategory` 0 in ACB (0x19 in ACR); TextureMap `CompiledTextureMap.MctCompressionEnabled` is 1 in
   ACB (pixels "MCT"-compressed), 0 in ACR — converted textures keep ACR's plain pixels with the flag at 0 (RISK).
-- MeshShape: verts/indices/materials identical; MoppCode recompiled (RISK: kept ACR's). ACBMP.exe contains
-  Havok's MOPP compiler (hkpMoppCodeGenerator...) if a rebuild is needed.
+- MeshShape: verts/indices/materials identical; MoppCode recompiled by ACR (159/173 shared MtStMichel shapes differ).
+  ACR's MOPPs are NOT safe in ACB -- see "Collision: let ACB rebuild every MOPP" below.
 - Opaque shared objects (889 animations, 34 FX, 12 templates, 3 skeletons whose bone modifiers changed) are
   replaced by ACB's own bytes (same ids). Kept as ACR bytes (RISK): 4 FX, 12 MaterialTemplates
   (`--remap-acfe-templates` swaps them for same-named AC2_* templates), 21 NavMeshManagers, the TOD
@@ -201,7 +201,7 @@ now transformed the same way.
 
 1. Crash while loading: rerun convert.py with `--remap-acfe-templates` (ACR shaders are the top suspect), then
    try dropping the 4 kept ACR FX / TOD controller.
-2. Falling through geometry / no collision: MOPP code; rebuild via ACBMP's Havok compiler.
+2. Falling through geometry / no collision: MOPP code -- fixed, see "Collision: let ACB rebuild every MOPP".
 3. Black/garbled textures: MctCompressionEnabled=0 path.
 4. NPCs/crowd missing or stuck: NavMeshManager (kept ACR bytes).
 5. No spawns / instant OOB: layer remap (report lists what went where).
@@ -301,10 +301,27 @@ AC2MP_ludotest (0xdff24c44; referenced nowhere but LoadInfo), so the game loads 
 - ACR-only maps (ACR line / English name): Antioch 334842 ANTIOCH, Constantinople 334844 GALATA, Jerusalem(dlc)
   334843 JERUSALEM, Juderia 334845 IPPOKRATOUS, Rhodes 334731 KNIGHTS HOSPITAL, Souk 334846 SOUK, Dyers(dlc) 338599
   DYERS, Imperial(dlc) 338597 IMPERIAL; night/dusk variants 334848-334854 (same World, TimeOfDay 0/18, hidden like
-  ACB's night maps). ACR has no descriptions for them. Names come in 15 languages from ACR's DataPC_localization.forge.
+  ACB's night maps). ACR has no descriptions for them; maps.json carries our own English ones. Names come in 15 languages from ACR's DataPC_localization.forge.
 - `locdecode.py`: CompressedLocalizationData reader (port of DecodeHeader/GetLocalizedStringRaw; pair-table codes,
   big-endian block index + per-block id tables). Matches the AnvilToolkit export of ACB English 10695/10703 (the
   rest differ only in \r\n vs \r).
 - Art: <Map>_MapDesc / <Map>_Alternative_MapDesc (512x512 DXT1) in ACR DataPC_extra (base maps) or the map forge
   (DLC maps); ACR's own MpWorlds for Dyers/Imperial point at placeholders.
 - `cxb_maps.py` edits mapmanagermulti.xml idempotently (only entries in the reserved objID range are replaced).
+
+## Collision: let ACB rebuild every MOPP (2026-10-01)
+
+In-game: Souk -- fell through the map at spawn; Knights Hospital -- many buildings walk/jump-through (and looked
+low-detail); Ippokratous -- both. Not streaming: Souk's ground (ACFE_RHO_Souk_Ground_*) is in the always-loaded top
+cell next to the spawn points that did work, and the data was complete (every spawn has collision under it, every
+RigidBody.Shape resolves to an in-forge MeshShape, sizes within ACB's own). Ruled out on the way: the 6-level grid
+of Souk/Rhodes/Juderia (one shared 1 km ACR world, GridDimensionLevel0 32; ACB's GridLayout/GridPartition/
+GridLoadingAdvisor/FakeEntities code is fully generic, LoadingRangeTable/FakeCellIndex (Morton) match), data layers
+(these 3 maps keep everything in grid cells), Havok broadphase (fixed +-5000 x +-500 m), id collisions, cell sizes.
+
+Cause: `scimitar::MeshShape::UpdateSDKObject` (Mac 0x55cb60; ACBMP.exe FUN_016b3c40, VA 0x016b3c40) uses the stored
+MOPP only if `MoppCode` is non-empty AND `MoppCodeVersionNumber == 5`; otherwise it rebuilds it from the triangles
+with hkpMoppUtility::buildCode (tolerance 0.01) and sets the version to 5. convert.py used to stamp 5 on every ACR
+shape (the field is ACB-only), so ACB ran ACR-compiled MOPPs. convert.patch_fields now writes 0 -> ACB compiles
+its own at load for every ported MeshShape (only MeshShape stores a MOPP; Box/Sphere shapes have none).
+verify_maps.py flags any ported MeshShape left at 5.

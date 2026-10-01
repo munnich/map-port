@@ -34,7 +34,7 @@ for k in keys:
     wid = worlds[m["slot"]]
     menus[k] = json.load(open(os.path.join(d, "menu", "menu.json")))
     awds[k] = json.load(open(os.path.join(d, f"DataPC_{m['slot'][:19]}.forge.awd", "awd.json")))
-    types, w = {}, None
+    types, w, mopp5 = {}, None, 0
     for e, subs, _d in forge_items(os.path.join(d, f"DataPC_{m['slot'][:19]}.forge")):
         for ext, n, uid, p in subs:
             t = ACB_T.name_of(ext) if ext != "ERR" else "ERR"
@@ -42,7 +42,11 @@ for k in keys:
             if t == "World":
                 w = (uid, [ACB_T.name_of(x.obj.type_hash) for x in c.decode(p).obj.fields["Components"]
                            if getattr(x, "obj", None) is not None])
-    print(f"{k}: World {w[0]:#x} (slot {m['slot']} {wid:#x})")
+            elif t == "MeshShape":  # 5 = "trust ACR's MOPP" -> collision holes (see convert.patch_fields)
+                mopp5 += u32(c.decode(p).obj.fields["MoppCodeVersionNumber"]) == 5
+    print(f"{k}: World {w[0]:#x} (slot {m['slot']} {wid:#x}), {types.get('MeshShape', 0)} MeshShapes")
+    if mopp5:
+        problem(f"{k}: {mopp5} MeshShapes keep ACR's MOPP (MoppCodeVersionNumber 5)")
     if w[0] != wid or "DLCWorldComponent" in w[1]:
         problem(f"{k}: World id / DLCWorldComponent")
     for t in ("ContentPackage", "MpWorld", "MpMapsDLCAddon", "SoundBankDLCAddon", "SoundPackagesDLCAddon", "ERR"):
