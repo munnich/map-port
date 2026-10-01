@@ -1024,7 +1024,7 @@ def _add_world_data_methods():
     def base_world_data(self, out_forge, donor_world_id):
         """Non-DLC map: the skins DLC table (OnlineMenuController+0x5950) has no row for our World, and only those
         packages fill it. Build the world-data entries under fresh ids into <out_forge>.awd/ plus awd.json, from which
-        patch_skins_awd.py adds them and a row for our World to the skins forges (retail keeps every map's world data
+        patch_skins.py --awd adds them and a row for our World to the skins forges (retail keeps every map's world data
         as dependency-free entries there). Ids: the data entries are shared by both skins forges like retail's; each
         forge gets its own holder ids (retail's differ per package)."""
         self._next_id = self.slot_world_id + 0x10000
@@ -1040,7 +1040,7 @@ def _add_world_data_methods():
         meta = {"world": self.slot_world_id, "donor_world": donor_world_id, "modes": by_mode, "entries": entries,
                 "holder_ids": [[self.alloc_id() for _ in range(4)] for _forge in range(2)]}
         json.dump(meta, open(os.path.join(out, "awd.json"), "w"), indent=1)
-        self.r.add("base map: world data written for patch_skins_awd.py",
+        self.r.add("base map: world data written for patch_skins.py --awd",
                    note=f"{out}: " + ", ".join(f"mode {m}: {i:#x}" for m, i in sorted(by_mode.items())))
 
     Converter.alloc_id = alloc_id

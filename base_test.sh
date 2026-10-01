@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install Dyers as its own non-DLC map (World AC2MP_ludotest) next to the retail maps, or remove it again.
 #
-#   ./base_test.sh install     # copies out/base/DataPC_AC2MP_ludotest.forge + the patched skins forges (out/base/skins)
+#   ./base_test.sh install     # copies out/base/DataPC_AC2MP_ludotest.forge + the patched skins forges (out/base/skins, from patch_skins.py)
 #   ./base_test.sh uninstall   # removes the map forge, restores the skins forges saved by install
 #   ./base_test.sh status
 #

@@ -250,15 +250,37 @@ AC2MP_ludotest (0xdff24c44; referenced nowhere but LoadInfo), so the game loads 
 `multi/DataPC_AC2MP_ludotest.forge`. `bootstrap_worlds.json` (from `bootstrap_worlds.py DataPC.forge`) maps names -> ids.
 
     python3 convert.py <Dyers forge> <retail ACB multi> out/base/DataPC_AC2MP_ludotest.forge --base AC2MP_ludotest --remap-acfe-templates
-    python3 patch_skins_awd.py out/base/DataPC_AC2MP_ludotest.forge.awd <INSTALLED multi> out/base/skins
-    python3 verify_base.py out/base/DataPC_AC2MP_ludotest.forge out/base/skins
-    ./base_test.sh install          # + add cxb_dyers_entry.xml to the CXB's mapmanagermulti.xml
+    python3 menu_assets.py <Dyers forge> <retail ACB multi> out/base/menu
+    python3 patch_skins.py <INSTALLED multi> out/base/skins --awd out/base/DataPC_AC2MP_ludotest.forge.awd --menu out/base/menu
+    python3 verify_base.py out/base/DataPC_AC2MP_ludotest.forge out/base/skins out/base/menu <server cfg>/mapmanagermulti.xml
+    ./base_test.sh install          # + cxb_dyers_entry.xml in the CXB's mapmanagermulti.xml (done, uncommitted there)
 
 - register_base: no ContentPackage/MpWorld/DLC addons, DLCWorldComponent removed (base Worlds have none), World
   renamed + renumbered; donor base map (default San Marco) gives the sound bank id, the MP message scene and the MetaFile.
 - World data: retail keeps every map's AdditionalWorldData as dependency-free entries in skins_0001 (modes 2/7) and
   skins_0002 (2/7/6), each with an 11-world holder table. convert.py writes Dyers' Chest/Escort entries under fresh
-  ids to `<out>.awd/` + awd.json; patch_skins_awd.py adds them to both forges plus a holder copied from the donor's
+  ids to `<out>.awd/` + awd.json; patch_skins.py --awd adds them to both forges plus a holder copied from the donor's
   (mode 6 Assassinate stays on the donor's data). Use the installed skins as input: the game folder's skins_0002 is a
   community edit (differs from vbox retail). Untouched round trip of both skins forges is content-identical.
-- Menu entry: `cxb_dyers_entry.xml` (San Marco's name strings + DataPC_extra images until we add our own).
+- Menu entry: `cxb_dyers_entry.xml`; its strings/images live in skins_0001 (below).
+- Test 1 (base build, San Marco strings/images): map loads; Chest Capture: chests visible, zones still missing,
+  can't capture (same as the slot build) -- parked, lower priority.
+
+## Showing Dyers as Dyers (menu_assets.py + patch_skins.py --menu)
+
+- Strings: `LocalizationManager::GetLocalizedString` walks the loaded LocalizationCollections in priority order
+  (AddLocalizationCollection sorts by +0x2c; skins DLC packages register theirs in
+  CharacterSkinsDLCElement::OnPackageLoaded) and per collection the text/subtitle/e-manual package;
+  `LocalizationPackage::GetLocalizedStringRaw` binary-searches the plain `LocalizedData` array (LocalizedString
+  {TextID u32, Text LSTRING}) before the compressed blob. Retail leaves LocalizedData empty everywhere, so new
+  lines go there: 9000001 "DYERS" (ACR's own name, line 338599 / TempString in ACR's UnlockableMap "Map Dyers"),
+  9000002 a description (ACR has none), English text in all 16 text (Type 0) packages of skins_0001.
+  Encoding checked against LocalizationPackage::FastLoad: count, then per element id(4) + class hash(4) + TextID +
+  u32 len + UTF-16 incl. NUL.
+- Images: ACR's MpWorld_Dyers uses placeholders (TopViewImg = Rome loading screen, PreviewImg = Knight Hospital);
+  the real art is Dyers_MapDesc / Dyers_alternative_MapDesc in the ACR DLC forge (512x512 DXT1, full mips).
+  ACB wants PreviewImg 512x256 DXT1 (ac2mp_img_*) and TopViewImg 1024x512 DXT1 (AC2MP_LoadingScreen_*), both 1 mip,
+  UI textures stored upside down in both games. menu_assets.py crops 2:1, re-encodes with Pillow, and wraps them in
+  copies of San Marco's / Venice's entries (fresh ids 0xdff35000 / 0xdff35041; only id fields differ from the
+  templates). They go into skins_0001 (a LoadOnDemand source via CharacterSkinsDLCElement::OnPackageLoaded) --
+  the map forge isn't mounted in the menu.
