@@ -104,6 +104,19 @@ via 0x17877ec/0x1706f23 (tests 1 and 3), or a bad read at +0x1706f98 (test 2). R
 (10-22 straddles); `repack(..., align_entries=True)` (anvilforge acr-port-decoder) now lays entries out retail-style.
 `aligncheck.py` verifies.
 
+## Slot takeover keeps the slot's World id
+
+Test 4 (aligned build) loaded without crashing but hung before spawning, like a map that isn't installed. The rest of ACB
+knows Alhambra's World by id 0x42b7dce4 (DataPC.forge Game Bootstrap Settings / AssassinSoundSettings; the skins DLC
+package descriptors). convert.py now renumbers Dyers' World (0x3ba8d804) to the slot's id: own id, refs, raw id
+fields, dep tables, and a raw replace in the 21 NavMeshManagers (retail navmeshes embed the world id too). `idgrep.py`
+finds any id in decompressed forges.
+
+AdditionalWorldData: `AdditionalWorldDataDLCElement::OnPackageLoaded` (Mac 0xe6ad04) keeps only the FIRST loaded element's
+table (the skins DLC packages carry every world's chest/escort data); later ones are freed. So the converter no longer
+adds its own element, and Chest/Escort on the ported map currently use retail Alhambra's data (0x4fd98273 /
+0x4fd987d9, entity refs that don't exist in Dyers) -- expect those two modes to be broken until that is solved.
+
 ## If the in-game test fails
 
 1. Crash while loading: rerun convert.py with `--remap-acfe-templates` (ACR shaders are the top suspect), then

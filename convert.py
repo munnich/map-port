@@ -355,26 +355,27 @@ class Converter:
             else:
                 self.r.add("template NOT remapped (no ACB equivalent)", note=f"{name} ({'in forge' if in_forge else 'MISSING'})")
 
-    def apply_id_remap(self, v):
-        if not self.id_remap:
+    def apply_id_remap(self, v, remap=None):
+        remap = self.id_remap if remap is None else remap
+        if not remap:
             return
         stack = [v]
         while stack:
             x = stack.pop()
             if isinstance(x, Obj):
                 for k, y in x.fields.items():
-                    if isinstance(y, (Ref, Handle)) and u32(y.id) in self.id_remap:
-                        y.id = idb(self.id_remap[u32(y.id)])
+                    if isinstance(y, (Ref, Handle)) and u32(y.id) in remap:
+                        y.id = idb(remap[u32(y.id)])
                     stack.append(y)
                 stack.extend(d[3] for d in x.dyn or [])
             elif isinstance(x, list):
                 for y in x:
-                    if isinstance(y, (Ref, Handle)) and u32(y.id) in self.id_remap:
-                        y.id = idb(self.id_remap[u32(y.id)])
+                    if isinstance(y, (Ref, Handle)) and u32(y.id) in remap:
+                        y.id = idb(remap[u32(y.id)])
                     stack.append(y)
             elif isinstance(x, Ptr):
-                if x.link and u32(x.link) in self.id_remap:
-                    x.link = idb(self.id_remap[u32(x.link)])
+                if x.link and u32(x.link) in remap:
+                    x.link = idb(remap[u32(x.link)])
                 if x.obj is not None:
                     stack.append(x.obj)
             elif isinstance(x, Ref) and x.obj is not None:
@@ -493,6 +494,7 @@ class Converter:
         # slot's World object: take its name + MpMapsDLCAddons
         sw = find(s_files, lambda t, n: t == "World")
         slot_world_name = sw[0].subs[sw[1]][1]
+        self.slot_world_id = derive_uid_and_ext(sw[0].subs[sw[1]][2], True)[0]
         slot_addons = [(ext, n, p) for ext, n, p in sw[0].subs if ACB_T.name_of(ext) == "MpMapsDLCAddon"]
 
         # rename world + point DLCWorldComponent at the slot's addons
@@ -512,6 +514,7 @@ class Converter:
         for fn in [fn for fn, df in files.items() if any(ACB_T.name_of(s[0]) == "ContentPackage" for s in df.subs)]:
             del files[fn]
         world_id = world.obj.id
+        self.world_id = u32(world_id)
         for fn, df in s_files.items():
             types = {ACB_T.name_of(s[0]) for s in df.subs}
             if types & {"ContentPackage", "MpWorld"}:
@@ -528,7 +531,9 @@ class Converter:
                         s[2] = acb.encode(root)
                 files["slot_" + fn] = df
                 self.r.add("registration: took slot entry", note=df.subs[0][1])
-        self.add_additional_world_data(files, world_id)
+        # NOT add_additional_world_data(): AdditionalWorldDataDLCElement::OnPackageLoaded keeps only the *first*
+        # loaded element's table (skins DLC packages carry every world's), later ones are freed -- ours would be
+        # ignored, or, if loaded first, would wipe the chest/escort data of every other map.
 
         # images referenced by the MpWorlds
         img_ids = set()
@@ -544,6 +549,39 @@ class Converter:
                 files["slot_" + fn] = df
                 self.r.add("registration: took slot image", note=df.subs[0][1])
         return s_entries
+
+
+def renumber_object(conv, files, old, new):
+    """Give object `old` the id `new` everywhere: its own id, every reference
+    to it, dependency tables. Objects that don't decode (NavMeshManager embeds
+    the world id) get a raw 4-byte replace -- retail navmeshes carry it too."""
+    oldb, newb = idb(old), idb(new)
+    for df in files.values():
+        assert not any(derive_uid_and_ext(p, True)[0] == new for _e, _n, p in df.subs), f"{new:#x} already used"
+    for df in files.values():
+        for d in df.deps:
+            if d.id & 0xFFFFFFFF == old:
+                d.id = (d.id & ~0xFFFFFFFF) | new
+                conv.r.add("renumber: dependency")
+        for sub in df.subs:
+            if oldb not in sub[2]:
+                continue
+            try:
+                root = conv.acb.decode(sub[2])
+            except DecodeError:
+                sub[2] = sub[2].replace(oldb, newb)
+                conv.r.add(f"renumber: raw replace in {ACB_T.name_of(sub[0])}", note=sub[1])
+                continue
+            for o in walk(root.obj):
+                if o.id == oldb:
+                    o.id = newb
+                for k, v in o.fields.items():  # raw id fields, e.g. AdditionalWorldDataHolder.AssociatedWorld
+                    if v == oldb:
+                        o.fields[k] = newb
+            conv.apply_id_remap(root.obj, {old: new})
+            sub[2] = conv.acb.encode(root)
+            conv.r.add(f"renumber: {ACB_T.name_of(sub[0])}" + (" (residual bytes!)" if oldb in sub[2] else ""),
+                       note=sub[1])
 
 
 def vendor_dependencies(files, acb_dir, acb_idx, report):
@@ -706,6 +744,10 @@ def main():
     conv.substitute_opaque(files, args.acb_multi_dir)
     s_entries = conv.register_slot(files, args.acb_multi_dir, args.slot, work) if args.slot else []
     vendor_dependencies(files, args.acb_multi_dir, conv.acb_idx, r)
+    if args.slot:
+        # the rest of ACB knows the slot's World by id (AssassinSoundSettings in DataPC.forge, skins DLC package
+        # descriptors), so the ported World must take that id -- otherwise the map never finishes loading
+        renumber_object(conv, files, conv.world_id, conv.slot_world_id)
 
     out_dir = os.path.join(work, "out")
     shutil.rmtree(out_dir, ignore_errors=True)
