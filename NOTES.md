@@ -142,6 +142,23 @@ Retail-vs-ours comparison (typecount.py, extrefs.py with the multi-forge index a
   slot's into Cell00084. (Retail also has a CU_Herald body + Cloth/LiteRagdoll -- not copied yet.)
 - Dependency tables are NOT simply "entries holding referenced objects" (deprule.py): retail lists only part.
 
+## Test 7 -> runtime trace -> ROOT CAUSE of the pre-spawn hang: spawn points never activated
+
+Runtime tracing (`trace_lookups.gdb`: gdb dprintf on BigFileFat::GetIndexFromKey at ACBMP.exe 0x01b32e4f, logs every
+forge-index lookup + found flag + caller; attach to the running game, pass Wine's signals): in both the Dyers run
+and the control, every id was found; World, Cell00084, persona templates, AbilitySelectionPage, ReadyPage all load.
+So nothing is missing -- the hang is after loading, at spawn.
+
+GridCellDataBlock activates only the first `NumberOfObjectsToActivate` entries of `Objects`; most blocks end with a
+not-activated tail (Dyers Cell00084: 377 objects, 98 activated). `_append` added the standard-mode objects (incl.
+all 59 player spawn entities moved out of ACFE_* layers) at the END and bumped the count -> they stayed inactive
+and 62 tail objects got activated instead. No MultiSpawnPlayerComponent registered -> no spawn candidate -> the
+client waits forever (retail: all 95 Alhambra spawns active). `activate_objects()` now inserts into the active
+prefix; `spawncheck.py` verifies. Same fix applies to the copied MP message scene.
+
+Also learned: LoadOnDemandManager::LoadObject silently never completes when no source forge has the id as an
+*entry* (FileExistsInAlternateSource -> BigFile::GetFileIndex) -- the real "map not installed" hang.
+
 ## If the in-game test fails
 
 1. Crash while loading: rerun convert.py with `--remap-acfe-templates` (ACR shaders are the top suspect), then

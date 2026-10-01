@@ -148,6 +148,20 @@ def load_forge(path: str, workdir: str, game: Game):
 
 # ------------------------------------------------------------ conversion --
 
+def activate_objects(blk: Obj, ids):
+    """Add objects to a GridCellDataBlock so they get activated. Only the first NumberOfObjectsToActivate entries of
+    Objects are activated (most blocks end with a not-activated tail), so insert at the end of that prefix --
+    appending to the list would leave them inactive (and activate part of the tail instead)."""
+    objs = blk.fields["Objects"]
+    n = u32(blk.fields["NumberOfObjectsToActivate"])
+    have = {u32(x.id) for x in objs[:n]}
+    add = [i for i in dict.fromkeys(ids) if i not in have]
+    addset = set(add)
+    rest = [x for x in objs[n:] if u32(x.id) not in addset]   # an object already in the tail moves into the prefix
+    blk.fields["Objects"] = objs[:n] + [Ref(1, 0, idb(i)) for i in add] + rest
+    blk.fields["NumberOfObjectsToActivate"] = idb(n + len(add))
+
+
 class Converter:
     def __init__(self, args, report: Report):
         self.args = args
@@ -269,11 +283,7 @@ class Converter:
                     self.r.add("filters: left on ACR-only layers (object never loaded)")
 
     def _append(self, blk: Obj, ids):
-        have = {u32(x.id) for x in blk.fields["Objects"]}
-        add = [i for i in sorted(ids) if i not in have]
-        blk.fields["Objects"] = blk.fields["Objects"] + [Ref(1, 0, idb(i)) for i in add]
-        n = u32(blk.fields["NumberOfObjectsToActivate"]) + len(add)
-        blk.fields["NumberOfObjectsToActivate"] = idb(n)
+        activate_objects(blk, ids)
 
     def name_of(self, uid):
         w = self.where.get(uid)
@@ -650,10 +660,7 @@ def add_mp_message_scene(conv, files, acb_dir, slot_forge):
                       for s in df.subs))
     gi = next(i for i, s in enumerate(top.subs) if ACB_T.name_of(s[0]) == "GridCellDataBlock")
     blk = conv.acb.decode(top.subs[gi][2])
-    have = {u32(x.id) for x in blk.obj.fields["Objects"]}
-    add = [u for u in take if u in listed and u not in have]
-    blk.obj.fields["Objects"] = blk.obj.fields["Objects"] + [Ref(1, 0, idb(u)) for u in add]
-    blk.obj.fields["NumberOfObjectsToActivate"] = idb(u32(blk.obj.fields["NumberOfObjectsToActivate"]) + len(add))
+    activate_objects(blk.obj, [u for u in take if u in listed])
     top.subs[gi][2] = conv.acb.encode(blk)
     for uid in take:
         ext, name, p = by_uid[uid]
