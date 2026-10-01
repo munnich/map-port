@@ -60,7 +60,8 @@ ACR_ONLY_TYPES = set(ACR.types_by_hash) - set(ACB.types_by_hash)
 STANDARD_MODES = {"ACFE_Wanted", "ACFE_Manhunt", "ACFE_Assassinate", "ACFE_Escort", "ACFE_Corruption"}
 CHEST_MODES = {"ACFE_Chest_Capture"}
 CHEST_TARGET_LAYER = "gamemode_teamwanted"
-TOP_CELL_NAME_SUFFIX = "Cell00084"  # 4-level quadtree: 64+16+4+1 cells, last = whole map
+# custom-serialized types whose format ACR and ACB share (checked on maps both games ship) -- safe to keep in ACR form
+SHARED_OPAQUE = {"FX", "MaterialTemplate", "NavMeshManager", "PropertyControllerData"}
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -175,6 +176,7 @@ class Converter:
         self.where: dict[int, list] = defaultdict(list)  # uid -> [(DataFile, sub index)], all copies
         self.fallback: set[int] = set()       # uids to take from ACB (encode failed)
         self.id_remap: dict[int, int] = {}    # object id -> ACB object id (templates)
+        self.drop_uids: set[int] = set()      # sub-objects removed right before writing (indices stay valid till then)
 
     # -- helpers --
     def layer_name(self, i: int) -> str:
@@ -220,7 +222,11 @@ class Converter:
             return t.obj if t else None
 
         def refs(blk):
-            return [u32(x.id) for x in blk.fields["Objects"]]
+            return [u32(x.id) for x in blk.fields["Objects"]] if blk is not None else []
+
+        for l, b in by_layer.items():
+            if block(b) is None:  # e.g. Juderia: an association whose data block isn't in the forge
+                self.r.add("layers: data block not in forge (layer has no objects here)", note=f"{names[l]} -> {b:#x}")
 
         std = set()
         for l, n in names.items():
@@ -250,6 +256,7 @@ class Converter:
         if top is None:
             raise SystemExit("top grid cell has no data block")
         self.r.add("layers: top grid cell = " + self.name_of(top_id))
+        self.top_cell_id = top_id
         self._append(top, std)
 
         tw = next(l for l, n in names.items() if n == CHEST_TARGET_LAYER)
@@ -500,6 +507,7 @@ class Converter:
                     self.fallback.add(uid)
                     self.r.add(f"encode-failed->ACB copy:{t}", note=f"{name}: {e}")
                 else:
+                    self.fallback.add(uid)  # still ACR bytes: substitute_opaque drops it if unreferenced, else reports it
                     self.r.add(f"ENCODE-FAIL:{t}", note=f"{name}: {e}")
                 continue
             for d, j in locs:
@@ -508,7 +516,7 @@ class Converter:
 
     # -- 2. opaque substitution --
     def substitute_opaque(self, files, acb_dir):
-        need = {}
+        need, unsafe = {}, []
         for uid, locs in self.where.items():
             if uid in self.trees and uid not in self.fallback:
                 continue
@@ -516,8 +524,29 @@ class Converter:
             v = self.acb_idx.get(uid)
             if v:
                 need[uid] = (locs, v[2])
-            else:
+            elif ACR.name_of(df.subs[i][0]) in SHARED_OPAQUE:
                 self.r.add(f"opaque-kept-ACR:{ACR.name_of(df.subs[i][0])}", note=df.subs[i][1])
+            else:
+                unsafe.append((uid, locs))
+        # anything else still in ACR form would be read with ACB's layout when its entry loads (e.g. Constantinople's
+        # ACR-only "GameMode Deathmatch" UnlockableGameMode, an unreferenced extra sub-object of the World entry):
+        # drop it if nothing refers to it, else report it loudly
+        for uid, locs in unsafe:
+            b = idb(uid)
+            name = locs[0][0].subs[locs[0][1]][1]
+            refd = any(b in s_[2] and derive_uid_and_ext(s_[2], True)[0] != uid for df in files.values() for s_ in df.subs) \
+                or any(d.id & 0xFFFFFFFF == uid for df in files.values() for d in df.deps)
+            if refd and ACR.name_of(locs[0][0].subs[locs[0][1]][0]) == "Animation" and self.unhook(files, uid):
+                # ACR-only animations (e.g. jump_corner_spin_beam_left/right_leap, extra moves in the ACR corner spin
+                # beam's AnimComponent): ACR's Animation layout differs from ACB's (shared clips are larger in ACR),
+                # so take them out of every list that names them -- the object then works with ACB's own moves
+                self.r.add("unhooked + dropped ACR-only Animation (ACB can't read ACR's layout)", note=name)
+                refd = False
+            if refd:
+                self.r.add(f"opaque-kept-ACR-UNSAFE (referenced):{ACR.name_of(locs[0][0].subs[locs[0][1]][0])}", note=name)
+                continue
+            self.drop_uids.add(uid)  # removed right before writing (sub indices in self.where must stay valid)
+            self.r.add(f"dropped unreferenced ACR-only-format object:{ACR.name_of(locs[0][0].subs[locs[0][1]][0])}", note=name)
         by_forge = defaultdict(set)
         for uid, (_locs, fg) in need.items():
             by_forge[fg].add(uid)
@@ -538,6 +567,37 @@ class Converter:
         for uid, (locs, fg) in need.items():
             df, i = locs[0]
             self.r.add("substitute-NOT-FOUND", note=f"{df.subs[i][1]} ({fg})")
+
+    def unhook(self, files, uid):
+        """Remove every list reference to object `uid` (keeping GridCellDataBlock activation prefixes right) and every
+        dependency on it. True if nothing refers to it any more."""
+        b = idb(uid)
+        for df in files.values():
+            df.deps = [d for d in df.deps if d.id & 0xFFFFFFFF != uid]
+            for sub in df.subs:
+                if b not in sub[2] or derive_uid_and_ext(sub[2], True)[0] == uid:
+                    continue
+                try:
+                    root = self.acb.decode(sub[2])
+                except DecodeError:
+                    return False
+                for o in walk(root.obj):
+                    for k, v in list(o.fields.items()):
+                        if not isinstance(v, list):
+                            continue
+                        keep = [x for x in v if not (isinstance(x, (Ref, Handle)) and getattr(x, "obj", None) is None
+                                                     and u32(x.id) == uid)]
+                        if len(keep) == len(v):
+                            continue
+                        if k == "Objects" and "NumberOfObjectsToActivate" in o.fields:
+                            n = u32(o.fields["NumberOfObjectsToActivate"])
+                            gone = sum(1 for x in v[:n] if isinstance(x, (Ref, Handle)) and u32(x.id) == uid)
+                            o.fields["NumberOfObjectsToActivate"] = idb(n - gone)
+                        o.fields[k] = keep
+                sub[2] = self.acb.encode(root)
+                if b in sub[2][4:]:
+                    return False
+        return True
 
     # -- 4. registration --
     def register_base(self, files, acb_dir, name, world_id, donor, work):
@@ -569,8 +629,10 @@ class Converter:
                                           if not (getattr(c, "obj", None) is not None
                                                   and ACB_T.name_of(c.obj.type_hash) == "DLCWorldComponent")]
         wdf.subs[wi][2] = acb.encode(world)
-        wdf.subs = [s for s in wdf.subs if ACB_T.name_of(s[0]) not in
-                    ("MpMapsDLCAddon", "SoundBankDLCAddon", "SoundPackagesDLCAddon")]
+        # drop them at write time: removing subs here would shift the sub indices self.where holds for the rest of
+        # the World entry (that once fed 3 wrong objects to the Jerusalem chest list)
+        self.drop_uids |= {derive_uid_and_ext(s[2], True)[0] for s in wdf.subs if ACB_T.name_of(s[0]) in
+                           ("MpMapsDLCAddon", "SoundBankDLCAddon", "SoundPackagesDLCAddon")}
         for fn in [fn for fn, df in files.items() if any(ACB_T.name_of(s[0]) == "ContentPackage" for s in df.subs)]:
             del files[fn]
         self.world_id = u32(world.obj.id)
@@ -620,8 +682,8 @@ class Converter:
                 c.obj.fields["WorldInfo"].fields["NonLocalizedWorldName"] = slot_world_name.encode()
         wdf.subs[wi][2] = acb.encode(world)
         # replace our DLC addon objects (in the world .data) with the slot's
-        wdf.subs = [s for s in wdf.subs if ACB_T.name_of(s[0]) not in
-                    ("MpMapsDLCAddon", "SoundBankDLCAddon", "SoundPackagesDLCAddon")]
+        self.drop_uids |= {derive_uid_and_ext(s[2], True)[0] for s in wdf.subs if ACB_T.name_of(s[0]) in
+                           ("MpMapsDLCAddon", "SoundBankDLCAddon", "SoundPackagesDLCAddon")}  # see register_base
         wdf.subs += [list(a) for a in slot_addons]
         self.r.add("registration: world renamed to " + slot_world_name)
 
@@ -747,10 +809,8 @@ def add_mp_message_scene(conv, files, acb_dir, slot_forge):
     else:
         conv.r.add("mp message scene: NOT found in slot forge")
         return
-    top = next(df for df in files.values()
-               if any(ACB_T.name_of(s[0]) == "GridCellDataBlock" and s[1].endswith(TOP_CELL_NAME_SUFFIX + "_DataBlock")
-                      for s in df.subs))
-    gi = next(i for i, s in enumerate(top.subs) if ACB_T.name_of(s[0]) == "GridCellDataBlock")
+    # the quadtree root's block (remap_layers); its name depends on the grid depth (Cell00084 for 4 levels)
+    top, gi = conv.where[conv.top_cell_id][0]
     blk = conv.acb.decode(top.subs[gi][2])
     activate_objects(blk.obj, [u for u in take if u in listed])
     top.subs[gi][2] = conv.acb.encode(blk)
@@ -989,7 +1049,15 @@ def _add_world_data_methods():
         if 2 in by_mode:
             cid = by_mode[2]
             chest = []
-            for uid in self.chest_objects:
+            cands = self.chest_objects
+            if not cands:
+                # maps without ACR chest layers (Juderia) keep their chest spawns unlayered in the grid: take every
+                # SpawnType-3 spawn entity
+                cands = sorted(u for u, t in self.trees.items() if ACR.name_of(t.obj.type_hash) == "Entity" and any(
+                    ACR.name_of(o.type_hash) == "MultiSpawnPlayerComponent" and u32(o.fields.get("SpawnType", b"\0" * 4)) == 3
+                    for o in walk(t.obj)))
+                self.r.add("chest capture: no chest layer, using all SpawnType-3 entities", n=len(cands))
+            for uid in cands:
                 locs = self.where.get(uid)
                 if not locs:
                     continue
@@ -1113,6 +1181,8 @@ def main():
     for fn in os.listdir(src_dir):
         if fn.endswith(".MetaFile"):
             shutil.copy(os.path.join(src_dir, fn), os.path.join(out_dir, fn))
+    for df in files.values():
+        df.subs = [s_ for s_ in df.subs if derive_uid_and_ext(s_[2], True)[0] not in conv.drop_uids]
     for n, (fn, df) in enumerate(sorted(files.items(), key=lambda kv: retail_order(kv[0]))):
         base = fn[len("slot_"):] if fn.startswith("slot_") else fn
         base = base.split("_-_", 1)[1]

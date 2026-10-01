@@ -1,3 +1,8 @@
 __pycache__/
 *.forge
 cross.pkl
+out/maps/
+out/base/*.awd/
+out/base/menu/
+out/base/skins*/
+tags

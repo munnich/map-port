@@ -287,3 +287,24 @@ AC2MP_ludotest (0xdff24c44; referenced nowhere but LoadInfo), so the game loads 
   copies of San Marco's / Venice's entries (fresh ids 0xdff35000 / 0xdff35041; only id fields differ from the
   templates). They go into skins_0001 (a LoadOnDemand source via CharacterSkinsDLCElement::OnPackageLoaded) --
   the map forge isn't mounted in the menu.
+
+## All ACR-only maps: build_maps.py (supersedes the Dyers-only base_test.sh / verify_base.py / cxb_dyers_entry.xml)
+
+    python3 build_maps.py [map ...] [--rebuild]   # convert + checks, menu assets, skins, CXB XML, verify
+    ./install_maps.sh install | uninstall | status
+    # then rebuild the CXB from the server cfg: CXBTool convert <xml dir> gamesettings_c1380_d873_s6285.cxb
+
+- `maps.json`: per ACR map its forge, LoadInfo slot (all verified unreferenced outside LoadInfo in DataPC/extra/
+  extraparams/skins), menu variants (ACR name line, optional English description, TimeOfDay, preview/loading image
+  source + crop). `index` fixes every id: lines 9000000+100*i+2*v+1/+2, CXB objIDs 0xd7e50010+0x10*i+2*v(+1), images
+  slot+0x10400+0x100*v(+0x80 loading), world data slot+0x10000.. -- never reorder.
+- ACR-only maps (ACR line / English name): Antioch 334842 ANTIOCH, Constantinople 334844 GALATA, Jerusalem(dlc)
+  334843 JERUSALEM, Juderia 334845 IPPOKRATOUS, Rhodes 334731 KNIGHTS HOSPITAL, Souk 334846 SOUK, Dyers(dlc) 338599
+  DYERS, Imperial(dlc) 338597 IMPERIAL; night/dusk variants 334848-334854 (same World, TimeOfDay 0/18, hidden like
+  ACB's night maps). ACR has no descriptions for them. Names come in 15 languages from ACR's DataPC_localization.forge.
+- `locdecode.py`: CompressedLocalizationData reader (port of DecodeHeader/GetLocalizedStringRaw; pair-table codes,
+  big-endian block index + per-block id tables). Matches the AnvilToolkit export of ACB English 10695/10703 (the
+  rest differ only in \r\n vs \r).
+- Art: <Map>_MapDesc / <Map>_Alternative_MapDesc (512x512 DXT1) in ACR DataPC_extra (base maps) or the map forge
+  (DLC maps); ACR's own MpWorlds for Dyers/Imperial point at placeholders.
+- `cxb_maps.py` edits mapmanagermulti.xml idempotently (only entries in the reserved objID range are replaced).

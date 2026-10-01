@@ -1,28 +1,33 @@
-"""patch_skins.py <multi_dir> <out_dir> --awd <out_forge>.awd [--menu <menu_dir>]: what a non-DLC ported map needs
-in the skins DLC forges. Reads the forges from <multi_dir> (use the installed copies -- skins_0002 there may be a
-community edit; a <forge>.pre_dyers left by base_test.sh install is preferred) and writes the patched ones to <out_dir>; nothing is installed.
+"""patch_skins.py [map ...]: everything the ported non-DLC maps (maps.json; default all) need in the skins DLC forges.
+Input: the installed skins forges' unpatched originals (<forge>.pre_dyers, left by install_maps.sh; else the live
+file) -- skins_0002 there may be a community edit. Output: out/maps/skins/; nothing is installed.
 
---awd (Chest Capture / Escort, convert.py --base output): ACB looks per-map world data up only in
-  OnlineMenuController's table (+0x5950), filled from the first loaded AdditionalWorldDataDLCElement -- the skins DLC
-  packages (skins_0001: modes 2/7, skins_0002: modes 2/7/6). Which of the two loads first isn't fixed, so both get:
-  - the map's AdditionalWorldData entries, as dependency-free entries like retail keeps every map's;
-  - a holder for the map's World appended to the element: a copy of the donor map's holder with fresh ids, modes 2
-    (Chest Capture) and 7 (Escort) pointed at our entries, other modes (6, Assassinate) left on the donor's data.
---menu (menu_assets.py output) -- CharacterSkinsDLCElement::OnPackageLoaded makes each skins forge a LoadOnDemand
-  source and adds its localization packages as a collection:
-  - the map's menu image entries (PreviewImg / TopViewImg of the CXB MpWorld), skins_0001 only (found by id from any
-    source);
-  - its name/description lines, in the plain LocalizedData array of every text (Type 0) LocalizationPackage, which
-    GetLocalizedStringRaw searches before the compressed blob -- in BOTH forges: LocalizationManager::CleanUpCollections
-    keeps only the highest-priority collection (skins_0002: 14 > skins_0001: 12 > skins_0000: 11; each is a full
-    copy), so lines only in skins_0001 are never read while skins_0002 is installed."""
+Chest Capture / Escort (convert.py --base -> out/maps/<key>/DataPC_<slot>.forge.awd): ACB looks per-map world data up
+  only in OnlineMenuController's table (+0x5950), filled from the first loaded AdditionalWorldDataDLCElement -- the
+  skins DLC packages (skins_0001: modes 2/7, skins_0002: modes 2/7/6). Which of the two loads first isn't fixed, so
+  both get every map's AdditionalWorldData entries (dependency-free, like retail's) and a holder for its World: a copy
+  of the donor map's holder with fresh ids, modes 2 and 7 pointed at our entries, mode 6 left on the donor's data.
+Menu (menu_assets.py -> out/maps/<key>/menu): CharacterSkinsDLCElement::OnPackageLoaded makes each skins forge a
+  LoadOnDemand source and registers its localization packages as a collection.
+  - images (CXB PreviewImg / TopViewImg): skins_0001 only -- found by id from any source;
+  - name/description lines, in the plain LocalizedData array of every text (Type 0) LocalizationPackage, which
+    GetLocalizedStringRaw searches before the compressed blob -- in BOTH forges, per package language (English
+    where ACR has no translation): LocalizationManager::CleanUpCollections keeps only the highest-priority collection
+    (skins_0002: 14 > skins_0001: 12 > skins_0000: 11; each a full copy), so skins_0002's packages are the ones read."""
 import argparse, copy, json, os, shutil, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from convert import ACB, ACB_T, Game, create_entry, idb, load_forge, name_hash, repack, u32, walk
+from convert import ACB, ACB_T, HERE, Game, create_entry, idb, load_forge, name_hash, repack, u32, walk
 from anvilforge.fastload import Codec, Obj
 
 FORGES = ("DataPC_skins_0001_00000002_dlc.forge", "DataPC_skins_0002_00000004_dlc.forge")
 MENU_FORGE = FORGES[0]
+CFG = json.load(open(os.path.join(HERE, "maps.json")))
+
+
+def map_dirs(key):
+    m = CFG["maps"][key]
+    d = os.path.join(HERE, "out", "maps", key)
+    return os.path.join(d, f"DataPC_{m['slot'][:19]}.forge.awd"), os.path.join(d, "menu")
 
 
 def add_world_data(files, acb, meta, holder_ids, tag):
@@ -51,7 +56,7 @@ def add_world_data(files, acb, meta, holder_ids, tag):
                         pm.fields["AdditionalWorldData"].id = idb(modes[m])
                     got.append(f"{m}:{u32(pm.fields['AdditionalWorldData'].id):#x}")
                 o.fields["AdditionalWorldDataHolders"] = hs + [h]
-                print(f"  holder {holder_ids[0]:#x} for world {world:#x} (copy of {donor:#x}'s): modes {', '.join(got)}")
+                print(f"  holder {holder_ids[0]:#x} for world {world:#x}: modes {', '.join(got)}")
                 done = True
             sub[2] = acb.encode(root)
             df.dirty = True
@@ -59,9 +64,9 @@ def add_world_data(files, acb, meta, holder_ids, tag):
         sys.exit(f"{tag}: no AdditionalWorldDataDLCElement")
 
 
-def add_strings(files, acb, menu):
+def add_strings(files, acb, strings):
+    """strings: {line: {language: text}} (language 1 = English, the fallback)."""
     H = name_hash(ACB, "LocalizedString")
-    texts = dict(zip(menu["line_ids"], (menu["name"], menu["description"])))
     n = 0
     for df in files.values():
         for sub in df.subs:
@@ -70,50 +75,50 @@ def add_strings(files, acb, menu):
             root = acb.decode(sub[2])
             if u32(root.obj.fields["Type"]) != 0:  # 1 subtitles, 2 e-manual
                 continue
+            lang = str(u32(root.obj.fields["Language"]))
             have = {u32(s.fields["TextID"]): s for s in root.obj.fields["LocalizedData"]}
-            for i, t in texts.items():
-                have[i] = Obj(H, bytes(4), {"TextID": idb(i), "Text": t.encode("utf-16-le")})
+            for line, texts in strings.items():
+                t = texts.get(lang) or texts["1"]
+                have[int(line)] = Obj(H, bytes(4), {"TextID": idb(int(line)), "Text": t.encode("utf-16-le")})
             root.obj.fields["LocalizedData"] = [have[i] for i in sorted(have)]  # binary-searched
             sub[2] = acb.encode(root)
             df.dirty = True
             n += 1
-    print(f"  {len(texts)} lines added to {n} text localization packages: {texts}")
+    print(f"  {len(strings)} lines added to {n} text localization packages")
 
 
-def add_entries(work, entries, src_dir, names_ids, tag):
+def add_entries(work, entries, items, tag):
     known = {e.id for e in entries}
     n = len(entries)
     added = []
-    for fn, uid in names_ids:
+    for src, uid in items:
         if uid in known:
             sys.exit(f"{tag}: already has entry {uid:#x}")
-        dst = os.path.join(work, f"{n}_-_{os.path.splitext(fn)[0].split('_-_')[-1]}.data")
+        dst = os.path.join(work, f"{n}_-_{os.path.splitext(os.path.basename(src))[0].split('_-_')[-1]}.data")
         n += 1
-        shutil.copy(os.path.join(src_dir, fn), dst)
+        shutil.copy(src, dst)
         e = create_entry(dst, 0, Game.BROTHERHOOD)
         e.extension = 0  # as convert.py does for added entries
         added.append(e)
-        print(f"  entry {uid:#x} ({fn})")
+        known.add(uid)
+    print(f"  {len(added)} entries added")
     return added
 
 
-def patch(forge, out_dir, work, awd, awd_dir, holder_ids, menu, menu_dir, parts=("strings", "images"), strings_menu=None):
+def patch(src, out_dir, work, tag, awds, fi, strings, images):
     acb = Codec(ACB_T)
-    tag = os.path.basename(forge).replace(".pre_dyers", "")
     shutil.rmtree(work, ignore_errors=True)
-    entries, files = load_forge(forge, work, Game.BROTHERHOOD)
-    added = []
-    if awd:
-        add_world_data(files, acb, awd, holder_ids, tag)
-    if strings_menu and "strings" in parts:
-        add_strings(files, acb, strings_menu)
+    entries, files = load_forge(src, work, Game.BROTHERHOOD)
+    for key, (awd, _d) in awds.items():
+        add_world_data(files, acb, awd, awd["holder_ids"][fi], f"{tag} {key}")
+    if strings:
+        add_strings(files, acb, strings)
     for fn, df in files.items():
         if getattr(df, "dirty", False):
             open(os.path.join(work, fn), "wb").write(df.build(Game.BROTHERHOOD))
-    if awd:
-        added += add_entries(work, entries + added, awd_dir, sorted(awd["entries"].items()), tag)
-    if menu and "images" in parts:
-        added += add_entries(work, entries + added, menu_dir, [(v["entry"], v["id"]) for v in menu["images"].values()], tag)
+    items = [(os.path.join(d, fn), uid) for awd, d in awds.values() for fn, uid in sorted(awd["entries"].items())]
+    items += images
+    added = add_entries(work, entries, items, tag)
     out = os.path.join(out_dir, tag)
     repack(work, out, Game.BROTHERHOOD, original_entries=list(entries) + added, align_entries=True)
     print(f"  wrote {out} ({os.path.getsize(out) / 1e6:.1f} MB)")
@@ -121,24 +126,31 @@ def patch(forge, out_dir, work, awd, awd_dir, holder_ids, menu, menu_dir, parts=
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("multi_dir")
-    ap.add_argument("out_dir")
-    ap.add_argument("--awd", required=True, help="<out_forge>.awd from convert.py --base")
-    ap.add_argument("--menu", help="menu_assets.py output dir")
-    ap.add_argument("--menu-parts", default="strings,images", help="which menu assets to add (for A/B tests)")
+    ap.add_argument("maps", nargs="*", help="map keys from maps.json (default: all)")
+    ap.add_argument("--out", default=os.path.join(HERE, "out", "maps", "skins"))
     ap.add_argument("--work", default=None)
+    ap.add_argument("--menu-parts", default="strings,images", help="which menu assets to add (for A/B tests)")
     args = ap.parse_args()
-    work = args.work or os.path.join(args.out_dir, "_work")
-    awd = json.load(open(os.path.join(args.awd, "awd.json")))
-    menu = json.load(open(os.path.join(args.menu, "menu.json"))) if args.menu else None
-    os.makedirs(args.out_dir, exist_ok=True)
-    for forge, hids in zip(FORGES, awd["holder_ids"]):
-        src = os.path.join(args.multi_dir, forge)
-        if os.path.exists(src + ".pre_dyers"):  # base_test.sh install keeps the unpatched original there
+    keys = args.maps or list(CFG["maps"])
+    parts = args.menu_parts.split(",")
+    work = args.work or os.path.join(args.out, "_work")
+    awds, strings, images = {}, {}, []
+    for k in keys:
+        awd_dir, menu_dir = map_dirs(k)
+        awds[k] = (json.load(open(os.path.join(awd_dir, "awd.json"))), awd_dir)
+        menu = json.load(open(os.path.join(menu_dir, "menu.json")))
+        if "strings" in parts:
+            strings.update(menu["strings"])
+        if "images" in parts:
+            images += [(os.path.join(menu_dir, i["entry"]), i["id"]) for i in menu["images"]]
+    os.makedirs(args.out, exist_ok=True)
+    for fi, forge in enumerate(FORGES):
+        src = os.path.join(CFG["acb_installed"], forge)
+        if os.path.exists(src + ".pre_dyers"):  # install_maps.sh keeps the unpatched original there
             src += ".pre_dyers"
-        print(forge, "<-", os.path.basename(src))
-        patch(src, args.out_dir, os.path.join(work, forge), awd, args.awd, hids,
-              menu if forge == MENU_FORGE else None, args.menu, args.menu_parts.split(","), strings_menu=menu)
+        print(forge, "<-", os.path.basename(src), f"({len(keys)} maps)")
+        patch(src, args.out, os.path.join(work, forge), forge, awds, fi, strings,
+              images if forge == MENU_FORGE else [])
     shutil.rmtree(work, ignore_errors=True)
 
 

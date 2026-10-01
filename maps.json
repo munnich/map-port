@@ -1,0 +1,79 @@
+{
+ "_doc": "build_maps.py config. Paths: acr_multi = ACR install (sources), acb_retail = untouched ACB multi (converter input), acb_installed = the game's multi folder (skins forges are patched from its *.pre_dyers originals, falling back to the live files). Per map: index fixes every id the map gets (lines 9000000+100*index+2*variant+1/+2, CXB objIDs 0xd7e50010+0x10*index+2*variant/+1), so never reuse or reorder indices. slot = unused GameBootstrap LoadInfo World (bootstrap_worlds.json) whose name+id the map takes over; the game then loads multi/DataPC_<slot>.forge. variants = menu entries (CXB UnlockableMap + MpWorld): name_line = ACR line id (all languages are taken from ACR's DataPC_localization.forge), description = English text or null (ACR has none for these maps), tod = TimeOfDay, preview/loading = [forge, ACR TextureMapSpec entry, crop top (upright, 512px source -> 2:1 band)], forge 'extra' = ACR DataPC_extra.forge, 'map' = the map's own ACR forge.",
+ "acr_multi": "/home/a/Games/assassins-creed-revelations/drive_c/Program Files (x86)/Ubisoft/Ubisoft Game Launcher/Games/Assassin's Creed Revelations/multi",
+ "acb_retail": "/home/a/vbox/Assassin's Creed Brotherhood/multi",
+ "acb_installed": "/home/a/Games/assassins-creed-brotherhood/drive_c/Program Files (x86)/Ubisoft/Ubisoft Game Launcher/games/Assassin's Creed Brotherhood/multi",
+ "server_xml": "/home/a/Documents/acb/ACB-2.0-Server-Configuration/mapmanagermulti.xml",
+ "donor": "AC2MP_SanMarco",
+ "maps": {
+  "dyers": {
+   "index": 0, "acr_forge": "DataPC_ACFE_Dyers_dlc.forge", "slot": "AC2MP_ludotest",
+   "variants": [
+    {"name_line": 338599, "tod": 12.0,
+     "description": "A maze of rooftop workshops where cloth is dyed in great stone vats and hung out to dry.",
+     "preview": ["map", "Dyers_MapDesc", 96], "loading": ["map", "Dyers_alternative_MapDesc", 112]}
+   ]
+  },
+  "antioch": {
+   "index": 1, "acr_forge": "DataPC_ACFE_Antioch.forge", "slot": "AC2MP_WhiteWorld",
+   "variants": [
+    {"name_line": 334842, "tod": 12.0, "description": null,
+     "preview": ["extra", "Antioche_MapDesc", 128], "loading": ["extra", "Antioche_MapDesc", 128]},
+    {"name_line": 334849, "tod": 0.0, "description": null, "hidden": true,
+     "preview": ["extra", "Antioche_Alternative_MapDesc", 128], "loading": ["extra", "Antioche_Alternative_MapDesc", 128]}
+   ]
+  },
+  "galata": {
+   "index": 2, "acr_forge": "DataPC_ACFE_Constantinople.forge", "slot": "AC2MP_AmboiseTest",
+   "variants": [
+    {"name_line": 334844, "tod": 12.0, "description": null,
+     "preview": ["extra", "Constantinople_MapDesc", 128], "loading": ["extra", "Constantinople_MapDesc", 128]},
+    {"name_line": 334851, "tod": 0.0, "description": null, "hidden": true,
+     "preview": ["extra", "Constantinople_Alternative_MapDesc", 128], "loading": ["extra", "Constantinople_Alternative_MapDesc", 128]}
+   ]
+  },
+  "jerusalem": {
+   "index": 3, "acr_forge": "DataPC_ACFE_Jerusalem_dlc.forge", "slot": "AC2MP_Marketing_Map",
+   "variants": [
+    {"name_line": 334843, "tod": 8.0, "description": null,
+     "preview": ["map", "Jerusalem_MapDesc", 128], "loading": ["map", "Jerusalem_MapDesc", 128]},
+    {"name_line": 334850, "tod": 18.0, "description": null, "hidden": true,
+     "preview": ["map", "Jerusalem_Alternative_MapDesc", 128], "loading": ["map", "Jerusalem_Alternative_MapDesc", 128]}
+   ]
+  },
+  "ippokratous": {
+   "index": 4, "acr_forge": "DataPC_ACFE_Juderia.forge", "slot": "AC2MP_MSM_TEST",
+   "variants": [
+    {"name_line": 334845, "tod": 8.0, "description": null,
+     "preview": ["extra", "Juderia_MapDesc", 128], "loading": ["extra", "Juderia_MapDesc", 128]},
+    {"name_line": 334852, "tod": 0.0, "description": null, "hidden": true,
+     "preview": ["extra", "Juderia_Alternative_MapDesc", 128], "loading": ["extra", "Juderia_Alternative_MapDesc", 128]}
+   ]
+  },
+  "knights_hospital": {
+   "index": 5, "acr_forge": "DataPC_ACFE_Rhodes.forge", "slot": "AC2MP_Test_Spawn",
+   "variants": [
+    {"name_line": 334731, "tod": 17.0, "description": null,
+     "preview": ["extra", "KnightHospital_MapDesc", 128], "loading": ["extra", "KnightHospital_MapDesc", 128]},
+    {"name_line": 334848, "tod": 0.0, "description": null, "hidden": true,
+     "preview": ["extra", "KnightHospital_Alternative_MapDesc", 128], "loading": ["extra", "KnightHospital_Alternative_MapDesc", 128]}
+   ]
+  },
+  "souk": {
+   "index": 6, "acr_forge": "DataPC_ACFE_Souk.forge", "slot": "TMP_Toscany_AC2MP",
+   "variants": [
+    {"name_line": 334846, "tod": 20.0, "description": null,
+     "preview": ["extra", "Souk_MapDesc", 128], "loading": ["extra", "Souk_MapDesc", 128]},
+    {"name_line": 334854, "tod": 0.0, "description": null, "hidden": true,
+     "preview": ["extra", "Souk_Alternative_MapDesc", 128], "loading": ["extra", "Souk_Alternative_MapDesc", 128]}
+   ]
+  },
+  "imperial": {
+   "index": 7, "acr_forge": "DataPC_ACFE_Imperial_dlc.forge", "slot": "TMP_Venise_AC2MP",
+   "variants": [
+    {"name_line": 338597, "tod": 12.0, "description": null,
+     "preview": ["map", "Imperial_MapDesc", 128], "loading": ["map", "Imperial_alternative_MapDesc", 128]}
+   ]
+  }
+ }
+}
