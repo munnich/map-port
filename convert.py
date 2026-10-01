@@ -253,6 +253,7 @@ class Converter:
 
         tw = next(l for l, n in names.items() if n == CHEST_TARGET_LAYER)
         self._append(block(by_layer[tw]), chest)
+        self.moves = [(top_id, sorted(std)), (by_layer[tw], sorted(chest))]
 
         wdlm.obj.fields["LayersConfig"] = [a for a in assoc if u32(a.fields["Layer"].id) not in acr_only_layers]
         self.r.add("layers: ACR-only layer associations removed", n=len(assoc) - len(wdlm.obj.fields["LayersConfig"]))
@@ -281,6 +282,58 @@ class Converter:
                     self.r.add("filters: -> " + CHEST_TARGET_LAYER)
                 else:
                     self.r.add("filters: left on ACR-only layers (object never loaded)")
+
+    def materialize_moves(self, files):
+        """Objects moved into a grid cell / layer block by remap_layers still live in their ACR layer's entry
+        (DataBlock_ACFE_Wanted, ...), which nothing loads any more -- the block's Refs would dangle at runtime (no
+        spawn point ever registered: the pre-spawn hang). Retail keeps a block's objects in the block's own entry,
+        so copy each moved object, plus the objects of its source entry it references (meshes, textures, ...),
+        into the target block's entry, and merge the source entries' dependency tables."""
+        for block_uid, ids in getattr(self, "moves", []):
+            target = self.where[block_uid][0][0]
+            have = {derive_uid_and_ext(sub[2], True)[0] for sub in target.subs}
+            dep_ids = {d.id & 0xFFFFFFFF for d in target.deps}
+            target_eid = derive_uid_and_ext(target.subs[0][2], True)[0]
+            sources, todo = set(), list(ids)
+            while todo:
+                uid = todo.pop()
+                if uid in have:
+                    continue
+                src = next((df for df, _i in self.where.get(uid, []) if df is not target), None)
+                if src is None:
+                    self.r.add("moved object: NOT found in any entry", note=f"{uid:#x}")
+                    continue
+                sub = next(sb for sb in src.subs if derive_uid_and_ext(sb[2], True)[0] == uid)
+                if ACB_T.name_of(sub[0]) == "GridCellDataBlock":
+                    continue
+                target.subs.append(list(sub))
+                have.add(uid)
+                sources.add(id(src))
+                self.r.add("moved object copied into its block's entry", note=f"{sub[1]} -> {target.subs[0][1]}")
+                local = {derive_uid_and_ext(sb[2], True)[0] for sb in src.subs}
+                try:
+                    root = self.acb.decode(sub[2])
+                except DecodeError:
+                    continue
+                for o in walk(root.obj):
+                    stack = list(o.fields.values()) + [d[3] for d in o.dyn or []]
+                    while stack:
+                        x = stack.pop()
+                        if isinstance(x, list):
+                            stack.extend(x)
+                        elif isinstance(x, (Ref, Handle)) and getattr(x, "obj", None) is None and u32(x.id) in local:
+                            todo.append(u32(x.id))
+                        elif isinstance(x, Ptr) and x.link and u32(x.link) in local:
+                            todo.append(u32(x.link))
+                        elif isinstance(x, (Ptr, Ref)) and getattr(x, "obj", None) is not None:
+                            stack.append(x.obj)
+            for df in files.values():
+                if id(df) in sources:
+                    for d in df.deps:
+                        lo = d.id & 0xFFFFFFFF
+                        if lo not in dep_ids and lo != target_eid:
+                            target.deps.append(d)
+                            dep_ids.add(lo)
 
     def _append(self, blk: Obj, ids):
         activate_objects(blk, ids)
@@ -868,6 +921,7 @@ def main():
     conv.remap_deps(files)
     conv.encode_all(skip_types=("ContentPackage",) if args.slot else ())
     conv.substitute_opaque(files, args.acb_multi_dir)
+    conv.materialize_moves(files)
     s_entries = conv.register_slot(files, args.acb_multi_dir, args.slot, work) if args.slot else []
     if args.slot:
         add_mp_message_scene(conv, files, args.acb_multi_dir, f"DataPC_{args.slot}_dlc.forge")

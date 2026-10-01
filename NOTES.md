@@ -159,6 +159,19 @@ prefix; `spawncheck.py` verifies. Same fix applies to the copied MP message scen
 Also learned: LoadOnDemandManager::LoadObject silently never completes when no source forge has the id as an
 *entry* (FileExistsInAlternateSource -> BigFile::GetFileIndex) -- the real "map not installed" hang.
 
+## Test 8 -> spawn probes -> second half of the root cause: moved objects were never loaded
+
+Spawn probes (trace_lookups.gdb: MultiSpawnManager_Update 0x005c6d80, Server_GetBestSpawnPoint 0x005c72d0 + its
+result at 0x005c73cc): Dyers asks for a spawn (rule 1 FarFromEnemies, SpawnType 0) 30x, the picker returns 0 every
+time; the control gets a point on the first call. Candidates = MultiSpawnManager+0x38 list, filled by
+MultiSpawnPlayerComponent::OnAddToWorld -> AddSpawnPoint, i.e. only when the entity is actually added to the world.
+
+The objects remap_layers moved into Cell00084 / gamemode_teamwanted were only *referenced* there; they still lived in
+the ACR layer entries (DataBlock_ACFE_Wanted/Corruption/...), which nothing loads -> never added -> no spawn point.
+Retail: every activated object of a block lives in the block's own entry (Alhambra: 3017/3017). `materialize_moves()`
+copies moved objects (+ the same-entry objects they reference) into the target block's entry and merges the source
+entries' deps; `blockcheck.py` verifies (ours now 2958/2958 own entry).
+
 ## If the in-game test fails
 
 1. Crash while loading: rerun convert.py with `--remap-acfe-templates` (ACR shaders are the top suspect), then
