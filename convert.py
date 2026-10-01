@@ -930,6 +930,37 @@ def _add_world_data_methods():
         elif self.vip_paths:
             self.r.add("escort: slot world has no TeamVIP entry in the skins table -- paths NOT shipped")
 
+        # Chest Capture (mode 2): retail's AdditionalWorldData_ChestCapture lists the map's chest spawn points --
+        # the SpawnType-3 MultiSpawnPlayerComponent entities of the gamemode_teamwanted layer -- and carries copies
+        # of those entities inside its own entry so the Refs resolve when it is loaded. Dyers' equivalents are the
+        # type-3 entities remap_layers moved into gamemode_teamwanted (Chest_Spawn*).
+        if 2 in by_mode:
+            cid = by_mode[2]
+            chest = []
+            for uid in self.chest_objects:
+                locs = self.where.get(uid)
+                if not locs:
+                    continue
+                df, i = locs[0]
+                sub = df.subs[i]
+                if ACB_T.name_of(sub[0]) != "Entity":
+                    continue
+                ent = self.acb.decode(sub[2]).obj
+                if any(ACB_T.name_of(o.type_hash) == "MultiSpawnPlayerComponent" and u32(o.fields["SpawnType"]) == 3
+                       for o in walk(ent)):
+                    chest.append((sub[1], uid, list(sub)))
+            chest.sort()
+            if chest:
+                root = Root(b"", 0, Obj(H("AdditionalWorldData_ChestCapture"), idb(cid),
+                                        {"chestSpawnPoints": [Ref(1, 0, idb(uid)) for _n, uid, _s in chest]}, flag=1))
+                fn = f"awd_-_{cid:016X}.data"
+                files[fn] = _new_datafile(fn, [[H("AdditionalWorldData_ChestCapture"), "Unnamed", self.acb.encode(root)]]
+                                          + [s_ for _n, _u, s_ in chest])
+                self.r.add("chest capture: chest spawn points shipped under the slot world's id", n=len(chest),
+                           note=f"{cid:#x}: " + ", ".join(n for n, _u, _s in chest))
+            else:
+                self.r.add("chest capture: no SpawnType-3 entities found -- NOT shipped")
+
     Converter.alloc_id = alloc_id
     Converter.add_additional_world_data = add_additional_world_data
     Converter.override_slot_world_data = override_slot_world_data

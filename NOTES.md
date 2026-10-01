@@ -183,8 +183,13 @@ DataPC. So an entry with the same id in OUR forge overrides the skins copy -- no
 TeamVIPNavflowPathNode{NavFlow handle, IsSpawnPoint, IsCheckpoint}; 4 paths / 54 nodes, all NavFlow targets are
 Dyers CrowdFlow/NavFlow entities active in loaded cells) as entry 0x4fd987d9, shaped like retail (1 object, no deps).
 Retail gamemode_teamvip layers are empty -- nothing else needed.
-Chest Capture (mode 2) NOT ported: retail's chest points are 18 Entities with a MultiSpawnPlayerComponent stored inside
-the AWD entry itself; Dyers' chest objects are plain entities -- needs its own conversion.
+Escort confirmed working in-game.
+
+Chest Capture (mode 2, Alhambra id 0x4fd98273): retail's AdditionalWorldData_ChestCapture.chestSpawnPoints refs the
+map's SpawnType-3 MultiSpawnPlayerComponent entities (Multi_Chest_01..18, gamemode_teamwanted layer) and its entry
+carries copies of them with the SAME ids (18/18 also in the map forge), no deps. Dyers' equivalents: the 16 type-3
+Chest_Spawn* entities remap_layers moved into gamemode_teamwanted. `override_slot_world_data()` ships entry
+0x4fd98273 = AWD + those 16 entities, same layout.
 
 ## If the in-game test fails
 
