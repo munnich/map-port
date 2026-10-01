@@ -190,6 +190,12 @@ map's SpawnType-3 MultiSpawnPlayerComponent entities (Multi_Chest_01..18, gamemo
 carries copies of them with the SAME ids (18/18 also in the map forge), no deps. Dyers' equivalents: the 16 type-3
 Chest_Spawn* entities remap_layers moved into gamemode_teamwanted. `override_slot_world_data()` ships entry
 0x4fd98273 = AWD + those 16 entities, same layout.
+Test: chests loaded from OUR entry (trace: 0x4fd98273 found in the map forge) but no capture zones. Consumer:
+GBrick_PickupObjectManager::NotifyWorldLoaded (Mac 0xf4ab46) World::AddEntity()s every chestSpawnPoints entity; the
+zone itself is the global FX AC2MP_Zone_Chest (-> entity AC2MP_CaptureZone, skins CoreFX table). Retail's AWD copies
+are NOT plain copies of the map twins: they differ in exactly IsPhantom=1 and component Ptr status 0 + flag 1 (map:
+status 4 + flag 0) -- that transform reproduces all 18 Alhambra AWD copies byte for byte. Ours were plain copies;
+now transformed the same way.
 
 ## If the in-game test fails
 

@@ -828,6 +828,11 @@ def vendor_dependencies(files, acb_dir, acb_idx, report):
                 have.add(i)
 
 
+def _with_flag(obj, flag):
+    obj.flag = flag
+    return obj
+
+
 def _new_datafile(fname, subs):
     df = DataFile.__new__(DataFile)
     df.fname, df.deps, df.raw_dep, df.subs = fname, [], b"", subs
@@ -948,7 +953,14 @@ def _add_world_data_methods():
                 ent = self.acb.decode(sub[2]).obj
                 if any(ACB_T.name_of(o.type_hash) == "MultiSpawnPlayerComponent" and u32(o.fields["SpawnType"]) == 3
                        for o in walk(ent)):
-                    chest.append((sub[1], uid, list(sub)))
+                    # the AWD's copy is not a plain copy of the map's: retail's differ from their map twins in
+                    # exactly IsPhantom=1 and inline component pointers stored as status 0 + flag 1 (instead of
+                    # status 4 + flag 0) -- reproduces all 18 Alhambra copies byte for byte from the map copies
+                    root = self.acb.decode(sub[2])
+                    root.obj.fields["IsPhantom"] = b"\x01"
+                    root.obj.fields["Components"] = [Ptr(0, obj=_with_flag(x.obj, 1)) if isinstance(x, Ptr) and x.obj is not None
+                                                     else x for x in root.obj.fields["Components"]]
+                    chest.append((sub[1], uid, [sub[0], sub[1], self.acb.encode(root)]))
             chest.sort()
             if chest:
                 root = Root(b"", 0, Obj(H("AdditionalWorldData_ChestCapture"), idb(cid),
