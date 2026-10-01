@@ -890,8 +890,49 @@ def _add_world_data_methods():
                 sub[2] = acb.encode(cp)
                 self.r.add("additional world data: DLC element added to " + sub[1])
 
+    def override_slot_world_data(self, files, acb_dir):
+        """Escort (TeamVIP) paths: ACB looks them up per world id + game mode in the AdditionalWorldDataDLCElement of
+        the first loaded package (the skins DLCs; see OnPackageLoaded) and loads the AdditionalWorldData object by id
+        through LoadOnDemandManager, which probes sources in order DataPC_extra -> the map forge -> skins DLCs ->
+        ... (seen in the lookup trace). So an entry in OUR forge with the id the skins table uses for the slot world
+        overrides the slot map's data. Ship Dyers' World.TeamVIPPaths that way (same types in both games; the nodes'
+        NavFlow handles point at Dyers' own CrowdFlow entities)."""
+        from analyze import forge_items
+        want = idb(self.slot_world_id)
+        by_mode = {}
+        for fg in ("DataPC_skins_0002_00000004_dlc.forge", "DataPC_skins_0001_00000002_dlc.forge",
+                   "DataPC_skins_0000_00000001_dlc.forge"):
+            path = os.path.join(acb_dir, fg)
+            if not os.path.exists(path):
+                continue
+            for _e, subs, _d in forge_items(path):
+                for ext, _name, _uid, pl in subs:
+                    if ACB_T.name_of(ext) != "ContentPackage":
+                        continue
+                    for o in walk(self.acb.decode(pl).obj):
+                        if ACB_T.name_of(o.type_hash) == "AdditionalWorldDataHolder" and o.fields["AssociatedWorld"] == want:
+                            for pm in o.fields["PerGameModeData"]:
+                                by_mode.setdefault(u32(pm.fields["AssociatedGameModeID"]), u32(pm.fields["AdditionalWorldData"].id))
+            if by_mode:
+                break
+        self.r.add("slot world data ids (skins DLC table)", note=", ".join(f"mode {m}: {i:#x}" for m, i in sorted(by_mode.items())))
+        H = lambda n: name_hash(ACB, n)
+        if self.vip_paths and 7 in by_mode:
+            vid = by_mode[7]
+            root = Root(b"", 0, Obj(H("AdditionalWorldData_TeamVIP"), idb(vid), {"TeamVIPPaths": self.vip_paths}, flag=1))
+            self.prune(root.obj)
+            self.strip(root.obj, "AdditionalWorldData_TeamVIP")
+            fn = f"awd_-_{vid:016X}.data"
+            files[fn] = _new_datafile(fn, [[H("AdditionalWorldData_TeamVIP"), "Unnamed", self.acb.encode(root)]])
+            nodes = sum(len(pth.fields["Path"]) for pth in self.vip_paths)
+            self.r.add("escort: TeamVIP paths shipped under the slot world's id", n=len(self.vip_paths),
+                       note=f"{vid:#x}, {nodes} nodes")
+        elif self.vip_paths:
+            self.r.add("escort: slot world has no TeamVIP entry in the skins table -- paths NOT shipped")
+
     Converter.alloc_id = alloc_id
     Converter.add_additional_world_data = add_additional_world_data
+    Converter.override_slot_world_data = override_slot_world_data
 
 
 _add_world_data_methods()
@@ -924,6 +965,7 @@ def main():
     conv.materialize_moves(files)
     s_entries = conv.register_slot(files, args.acb_multi_dir, args.slot, work) if args.slot else []
     if args.slot:
+        conv.override_slot_world_data(files, args.acb_multi_dir)
         add_mp_message_scene(conv, files, args.acb_multi_dir, f"DataPC_{args.slot}_dlc.forge")
         add_reference_deps(conv, files, f"DataPC_{args.slot}_dlc.forge")
     vendor_dependencies(files, args.acb_multi_dir, conv.acb_idx, r)

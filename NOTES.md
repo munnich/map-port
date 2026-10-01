@@ -172,6 +172,20 @@ Retail: every activated object of a block lives in the block's own entry (Alhamb
 copies moved objects (+ the same-entry objects they reference) into the target block's entry and merges the source
 entries' deps; `blockcheck.py` verifies (ours now 2958/2958 own entry).
 
+## Test 9: Dyers loads and plays (Wanted). Escort (TeamVIP) navigation
+
+ACB: Escort paths come from AdditionalWorldData_TeamVIP, looked up per (world id, mode 7) in the skins DLCs' table
+(Alhambra -> 0x4fd987d9; mode 2 chest 0x4fd98273; mode 6 Assassinate 0x239e1b54 = just a VIPHighReactionPack ref,
+map-independent). The object is loaded by id via LoadOnDemandManager, which probes sources in this order (from the
+lookup trace): DataPC_extra -> the map forge -> skins_0002 -> Pienza -> skins_0001 -> MtStMichel -> skins_0000 ->
+DataPC. So an entry with the same id in OUR forge overrides the skins copy -- no skins forge needs touching.
+`override_slot_world_data()` ships Dyers' World.TeamVIPPaths (same types in both games: TeamVIPNavflowPath ->
+TeamVIPNavflowPathNode{NavFlow handle, IsSpawnPoint, IsCheckpoint}; 4 paths / 54 nodes, all NavFlow targets are
+Dyers CrowdFlow/NavFlow entities active in loaded cells) as entry 0x4fd987d9, shaped like retail (1 object, no deps).
+Retail gamemode_teamvip layers are empty -- nothing else needed.
+Chest Capture (mode 2) NOT ported: retail's chest points are 18 Entities with a MultiSpawnPlayerComponent stored inside
+the AWD entry itself; Dyers' chest objects are plain entities -- needs its own conversion.
+
 ## If the in-game test fails
 
 1. Crash while loading: rerun convert.py with `--remap-acfe-templates` (ACR shaders are the top suspect), then
