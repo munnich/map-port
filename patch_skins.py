@@ -94,7 +94,7 @@ def add_entries(work, entries, src_dir, names_ids, tag):
     return added
 
 
-def patch(forge, out_dir, work, awd, awd_dir, holder_ids, menu, menu_dir):
+def patch(forge, out_dir, work, awd, awd_dir, holder_ids, menu, menu_dir, parts=("strings", "images")):
     acb = Codec(ACB_T)
     tag = os.path.basename(forge).replace(".pre_dyers", "")
     shutil.rmtree(work, ignore_errors=True)
@@ -102,14 +102,14 @@ def patch(forge, out_dir, work, awd, awd_dir, holder_ids, menu, menu_dir):
     added = []
     if awd:
         add_world_data(files, acb, awd, holder_ids, tag)
-    if menu:
+    if menu and "strings" in parts:
         add_strings(files, acb, menu)
     for fn, df in files.items():
         if getattr(df, "dirty", False):
             open(os.path.join(work, fn), "wb").write(df.build(Game.BROTHERHOOD))
     if awd:
         added += add_entries(work, entries + added, awd_dir, sorted(awd["entries"].items()), tag)
-    if menu:
+    if menu and "images" in parts:
         added += add_entries(work, entries + added, menu_dir, [(v["entry"], v["id"]) for v in menu["images"].values()], tag)
     out = os.path.join(out_dir, tag)
     repack(work, out, Game.BROTHERHOOD, original_entries=list(entries) + added, align_entries=True)
@@ -122,6 +122,7 @@ def main():
     ap.add_argument("out_dir")
     ap.add_argument("--awd", required=True, help="<out_forge>.awd from convert.py --base")
     ap.add_argument("--menu", help="menu_assets.py output dir")
+    ap.add_argument("--menu-parts", default="strings,images", help="which menu assets to add (for A/B tests)")
     ap.add_argument("--work", default=None)
     args = ap.parse_args()
     work = args.work or os.path.join(args.out_dir, "_work")
@@ -134,7 +135,7 @@ def main():
             src += ".pre_dyers"
         print(forge, "<-", os.path.basename(src))
         patch(src, args.out_dir, os.path.join(work, forge), awd, args.awd, hids,
-              menu if forge == MENU_FORGE else None, args.menu)
+              menu if forge == MENU_FORGE else None, args.menu, args.menu_parts.split(","))
     shutil.rmtree(work, ignore_errors=True)
 
 
