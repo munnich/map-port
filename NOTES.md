@@ -130,6 +130,18 @@ adds its own element, and Chest/Escort on the ported map currently use retail Al
 - Live inspection: /proc/<pid>/mem and /proc/<pid>/task/*/syscall are readable without stopping the game (Wine sets
   PR_SET_PTRACER_ANY); a stack sampler scanning thread stacks for return addresses into ACBMP.exe works.
 
+## Test 6: Dyers still hangs, control (retail Alhambra through our writer) loads -> content, not writer
+
+Retail-vs-ours comparison (typecount.py, extrefs.py with the multi-forge index acb_multi_idx.pkl from multiidx.py):
+- Retail maps reference only DataPC.forge outside their own forge (plus dangling handles). Ours referenced
+  AC2MP_VEN_WaterSea_01a, which lives only in SanMarco's forge (a --remap-acfe-templates target) -> never loadable.
+- Retail maps ship AC2MP_Characters_Body/Skin as their own entries (flag-1 deps of the users); ours referenced them
+  with no entry/deps. `add_reference_deps()` now adds flag-1 deps for both cases; vendor_dependencies copies them.
+- Every ACB map has one `Death_Message_Total_<map>_02` Entity (Scene with 61 MPMessage / 50 MPAbilityMessageMap /
+  21 MPDeathContextConditionClip, identical across maps); Dyers has none. `add_mp_message_scene()` copies the
+  slot's into Cell00084. (Retail also has a CU_Herald body + Cloth/LiteRagdoll -- not copied yet.)
+- Dependency tables are NOT simply "entries holding referenced objects" (deprule.py): retail lists only part.
+
 ## If the in-game test fails
 
 1. Crash while loading: rerun convert.py with `--remap-acfe-templates` (ACR shaders are the top suspect), then

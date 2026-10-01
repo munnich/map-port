@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.expanduser("~/Coding/Python/anvilforge-py-acrport/src
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from anvilforge.binio import write_string32
-from anvilforge.datafile import (DATA_MAGIC, DATA_VERSIONS, _build_toc, _extra_from_header,
+from anvilforge.datafile import (DATA_MAGIC, DATA_VERSIONS, Dependency, _build_toc, _extra_from_header,
                                  _read_inline_dependencies, _write_block_set,
                                  _write_inline_dependencies, derive_uid_and_ext,
                                  iter_datafile_subparts, object_id_bytes)
@@ -606,6 +606,103 @@ def renumber_object(conv, files, old, new):
                        note=sub[1])
 
 
+def add_mp_message_scene(conv, files, acb_dir, slot_forge):
+    """Every ACB MP map has one 'Death_Message_Total_<map>_02' Entity: a Scene with the MP kill/ability messages
+    (61 MPMessage, 50 MPAbilityMessageMap, 21 MPDeathContextConditionClip -- identical in every map). ACR maps have
+    none (Revelations keeps that elsewhere), so copy the slot map's into our top grid cell, together with the
+    objects of its retail entry it references; objects in other entries are handled by add_reference_deps()."""
+    from analyze import forge_items
+
+    def refs_in(root):
+        out = set()
+        for o in walk(root.obj):
+            stack = list(o.fields.values()) + [d[3] for d in o.dyn or []]
+            while stack:
+                x = stack.pop()
+                if isinstance(x, list):
+                    stack.extend(x)
+                elif isinstance(x, (Ref, Handle)) and getattr(x, "obj", None) is None:
+                    out.add(u32(x.id))
+                elif isinstance(x, Ptr) and x.link:
+                    out.add(u32(x.link))
+        return out
+
+    for e, subs, _deps in forge_items(os.path.join(acb_dir, slot_forge)):
+        hit = [s for s in subs if s[1].startswith("Death_Message_Total") and ACB_T.name_of(s[0]) == "Entity"]
+        if not hit:
+            continue
+        by_uid = {uid: (ext, name, p) for ext, name, uid, p in subs}
+        cell = next(conv.acb.decode(p) for ext, name, uid, p in subs if ACB_T.name_of(ext) == "GridCellDataBlock")
+        listed = {u32(x.id) for x in cell.obj.fields["Objects"]}
+        take, todo = [], [hit[0][2]]
+        while todo:
+            uid = todo.pop()
+            if uid in take or uid not in by_uid or ACB_T.name_of(by_uid[uid][0]) == "GridCellDataBlock":
+                continue
+            take.append(uid)
+            todo.extend(refs_in(conv.acb.decode(by_uid[uid][2])))
+        break
+    else:
+        conv.r.add("mp message scene: NOT found in slot forge")
+        return
+    top = next(df for df in files.values()
+               if any(ACB_T.name_of(s[0]) == "GridCellDataBlock" and s[1].endswith(TOP_CELL_NAME_SUFFIX + "_DataBlock")
+                      for s in df.subs))
+    gi = next(i for i, s in enumerate(top.subs) if ACB_T.name_of(s[0]) == "GridCellDataBlock")
+    blk = conv.acb.decode(top.subs[gi][2])
+    have = {u32(x.id) for x in blk.obj.fields["Objects"]}
+    add = [u for u in take if u in listed and u not in have]
+    blk.obj.fields["Objects"] = blk.obj.fields["Objects"] + [Ref(1, 0, idb(u)) for u in add]
+    blk.obj.fields["NumberOfObjectsToActivate"] = idb(u32(blk.obj.fields["NumberOfObjectsToActivate"]) + len(add))
+    top.subs[gi][2] = conv.acb.encode(blk)
+    for uid in take:
+        ext, name, p = by_uid[uid]
+        top.subs.append([ext, name, p])
+        conv.r.add("mp message scene: object copied into top cell", note=f"{ACB_T.name_of(ext)} {name}")
+
+
+def add_reference_deps(conv, files, slot_forge):
+    """Make objects this map references loadable the way retail maps do. At runtime only the map's own forge and
+    the global DataPC.forge are loaded, so a Ref / link to an object that lives only in another map's forge (e.g. a
+    template-remap target like AC2MP_VEN_WaterSea_01a, SanMarco) never resolves. Retail maps also ship their own
+    entry copies of shared templates (AC2MP_Characters_Body/Skin are entries in every map forge, listed with flag 1
+    in the users' dependency tables) even though DataPC.forge has them as sub-objects. Add such targets as flag-1
+    dependencies; vendor_dependencies() then copies them in."""
+    multi = pickle.load(open(os.path.join(HERE, "acb_multi_idx.pkl"), "rb"))
+    own = set()
+    decoded = []
+    for df in files.values():
+        for sub in df.subs:
+            own.add(derive_uid_and_ext(sub[2], True)[0])
+            try:
+                root = conv.acb.decode(sub[2])
+            except DecodeError:
+                continue
+            own.update(u32(o.id) for o in walk(root.obj))
+            decoded.append((df, root))
+    for df, root in decoded:
+        targets = set()
+        for o in walk(root.obj):
+            stack = list(o.fields.values()) + [d[3] for d in o.dyn or []]
+            while stack:
+                x = stack.pop()
+                if isinstance(x, list):
+                    stack.extend(x)
+                elif isinstance(x, Ref) and x.obj is None and x.tag in (1, 3):
+                    targets.add(u32(x.id))
+                elif isinstance(x, Ptr) and x.link:
+                    targets.add(u32(x.link))
+        have = {d.id & 0xFFFFFFFF for d in df.deps}
+        for t in sorted(targets - own - have - {0}):
+            where = multi.get(t, {})
+            if not where:
+                continue  # dangling in retail too (validate.py reports these)
+            if "DataPC.forge" in where and where.get(slot_forge, ("",))[0] != "<entry>":
+                continue  # global, and retail maps don't carry their own copy
+            df.deps.append(Dependency(id=t | (1 << 32)))
+            conv.r.add("reference dep added (vendored next)", note=f"{where[next(iter(where))][1]} <- {df.subs[0][1]}")
+
+
 def vendor_dependencies(files, acb_dir, acb_idx, report):
     """Retail map forges are self-contained: every entry's dependency table
     only lists entries of the same forge (checked on retail Alhambra: 0 of
@@ -765,6 +862,9 @@ def main():
     conv.encode_all(skip_types=("ContentPackage",) if args.slot else ())
     conv.substitute_opaque(files, args.acb_multi_dir)
     s_entries = conv.register_slot(files, args.acb_multi_dir, args.slot, work) if args.slot else []
+    if args.slot:
+        add_mp_message_scene(conv, files, args.acb_multi_dir, f"DataPC_{args.slot}_dlc.forge")
+        add_reference_deps(conv, files, f"DataPC_{args.slot}_dlc.forge")
     vendor_dependencies(files, args.acb_multi_dir, conv.acb_idx, r)
     if args.slot:
         # the rest of ACB knows the slot's World by id (AssassinSoundSettings in DataPC.forge, skins DLC package
