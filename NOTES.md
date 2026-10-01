@@ -205,3 +205,40 @@ now transformed the same way.
 3. Black/garbled textures: MctCompressionEnabled=0 path.
 4. NPCs/crowd missing or stuck: NavMeshManager (kept ACR bytes).
 5. No spawns / instant OOB: layer remap (report lists what went where).
+
+## Separate (non-DLC) map entry -- investigation (2026-10-01)
+
+How the game finds maps (Mac symbols):
+- Map list = `MapManagerMulti` UnlockableMaps (+0x40, comes from the CXB `mapmanagermulti.xml`, which defines each
+  `MpWorld` inline: World handle, TimeOfDay, name/description OasisLineIDs, TopViewImg/PreviewImg) plus DLC maps
+  (+0x48) added at runtime by `MpWorldDLCElement::OnPackagesLoaded` -> `MapManagerMulti::AddDLCMap` (skipped if an
+  existing UnlockableMap already points at that MpWorld). That's why Alhambra/Pienza/MSM aren't in the CXB XML.
+- DLC forges: `ContentLoadingThread::ScanDefaultDevice` globs `game:multi/DataPC*_dlc.forge` ->
+  `LoadPackagesFromForgeFile`; `MpWorldDLCElement::OnPackageLoaded` adds the forge as a LoadOnDemand source.
+- Non-DLC worlds: `World::GetWorldAlternateSourcePrefixName(worldId)` -> `"_" + GameBootstrap::GetObjectName(worldId)`
+  (truncated to 19 chars) -> file `multi/DataPC_<name>.forge`. GetObjectName searches `GameBootstrap.LoadInfo`
+  (DataPC.forge "Game Bootstrap Settings", 1271 {FileName, ObjectID, FileClassID}); unknown id -> "Unknown".
+- `OnlineMenuController::CreateUnlockedMapList` hides maps whose forge file doesn't exist (CheckWorldExists ->
+  AlternateSourceExistsForWorld), so players without the file just don't see the map.
+- Base-map menu images (TopViewImg = AC2MP_LoadingScreen_*_DiffuseMap, PreviewImg = ac2mp_img_*) live in
+  DataPC_extra.forge; the map forge isn't mounted at menu time, so a base map can't carry its own images.
+- Base map forge = DLC map forge minus DLCPackageDescriptor, MpWorld_* (+images), MpMapsDLCAddon.
+
+World-id keyed data a new world lacks:
+- Chest/Escort: `OnlineMenuController::GetAdditionalWorldData(world, mode)` only searches the table at
+  OnlineMenuController+0x5950 ({worldId, [{mode, handle}]}, 12-byte rows), filled once from the first loaded
+  AdditionalWorldDataDLCElement (skins DLC descriptors -- they cover base maps too, e.g. SanMarco 0x48069cd7).
+  No World-level fallback in ACB. -> need a row for Dyers: edit the 3 skins descriptors, or an acb2 hook.
+- AssassinSoundSettings (DataPC) has per-world entries (Alhambra, SanMarco, ...); a new world gets defaults.
+- Name string: UnlockableMap/MpWorld use OasisLineIDs; ACB has no "Dyers" line -> reuse one or hook.
+
+Ways to get a forge name for Dyers' World without DLC:
+1. Reuse an unused LoadInfo World (only referenced there, nowhere else in DataPC/extra/skins), e.g.
+   AC2MP_ludotest 0xdff24c44 -> renumber Dyers' World to it, ship `DataPC_AC2MP_ludotest.forge`. No DataPC edit.
+2. Add {AC2MP_Dyers, 0x3ba8d804, World} to LoadInfo (DataPC.forge repack; anvilforge multi-FileSet repack untested).
+3. acb2 hook on GetWorldAlternateSourcePrefixName / GetObjectName.
+
+Draft CXB entry for option 1 (ids 0xd7e50010/11 unused in ACB + the XML; names/images borrowed until we have our
+own): add `<UnlockableUnlockCondition>` (UnlockableRef 3622109200, UnlockConditionLevel 1) and a ReferenceList
+`<UnlockableMap>` objID 3622109200 with MpWorld objID 3622109201, World 3757198404, TimeOfDay 12.0; bump both
+Array_Size attributes.
