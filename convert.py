@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import os
 import pickle
 import shutil
@@ -539,6 +540,44 @@ class Converter:
             self.r.add("substitute-NOT-FOUND", note=f"{df.subs[i][1]} ({fg})")
 
     # -- 4. registration --
+    def register_base(self, files, acb_dir, name, world_id, donor, work):
+        """Non-DLC map (--base): ACB loads a non-DLC World from multi/DataPC_<LoadInfo name>.forge
+        (World::GetWorldAlternateSourcePrefixName -> GameBootstrap::GetObjectName), and the menu lists it from the
+        CXB's MapManagerMulti (MpWorld defined inline there). So: no ContentPackage / MpWorld / DLC addons (base
+        map forges have none, and base Worlds no DLCWorldComponent), World takes over a LoadInfo world's name + id.
+        The donor base map supplies the map sound bank id and the MetaFile."""
+        d_entries, d_files = load_forge(os.path.join(acb_dir, f"DataPC_{donor}.forge"), os.path.join(work, "donor"),
+                                        Game.BROTHERHOOD)
+        acb = self.acb
+        world_uid = next(u for u, t in self.trees.items() if ACR.name_of(t.obj.type_hash) == "World")
+        wdf, wi = self.where[world_uid][0]
+        world = acb.decode(wdf.subs[wi][2])
+        dw = next(acb.decode(s[2]).obj for df in d_files.values() for s in df.subs if ACB_T.name_of(s[0]) == "World")
+        self.donor_world_id = u32(dw.id)
+
+        def bank_ids(w):
+            comps = [c.obj for c in w.fields["Components"]
+                     if c.obj is not None and ACB_T.name_of(c.obj.type_hash) == "SoundBankWorldComponent"]
+            return [o for c in comps for o in walk(c) if ACB_T.name_of(o.type_hash) == "WwiseID"]
+        for ours, theirs in zip(bank_ids(world.obj), bank_ids(dw)):
+            if ours.fields.get("ShortID") == bytes(4):
+                ours.fields["ShortID"] = theirs.fields["ShortID"]
+                self.r.add("registration: sound bank id taken from donor world", note=theirs.fields["ShortID"].hex())
+
+        wdf.subs[wi][1] = name
+        world.obj.fields["Components"] = [c for c in world.obj.fields["Components"]
+                                          if not (getattr(c, "obj", None) is not None
+                                                  and ACB_T.name_of(c.obj.type_hash) == "DLCWorldComponent")]
+        wdf.subs[wi][2] = acb.encode(world)
+        wdf.subs = [s for s in wdf.subs if ACB_T.name_of(s[0]) not in
+                    ("MpMapsDLCAddon", "SoundBankDLCAddon", "SoundPackagesDLCAddon")]
+        for fn in [fn for fn, df in files.items() if any(ACB_T.name_of(s[0]) == "ContentPackage" for s in df.subs)]:
+            del files[fn]
+        self.world_id = u32(world.obj.id)
+        self.slot_world_id = world_id
+        self.r.add(f"registration: base map, world renamed to {name}, takes LoadInfo id {world_id:#x}")
+        return [e for e in d_entries if e.name == "GlobalMetaFile"]
+
     def register_slot(self, files, acb_dir, slot, work):
         slot_forge = os.path.join(acb_dir, f"DataPC_{slot}_dlc.forge")
         s_entries, s_files = load_forge(slot_forge, os.path.join(work, "slot"), Game.BROTHERHOOD)
@@ -841,10 +880,12 @@ def _new_datafile(fname, subs):
 
 def _add_world_data_methods():
     def alloc_id(self):
+        if not hasattr(self, "_multi_ids"):
+            self._multi_ids = set(pickle.load(open(os.path.join(HERE, "acb_multi_idx.pkl"), "rb")))
         while True:
             self._next_id += 1
             i = self._next_id
-            if i not in self.acb_idx and i not in self.acr_idx and i not in self.where:
+            if i not in self.acb_idx and i not in self.acr_idx and i not in self.where and i not in self._multi_ids:
                 return i
 
     def add_additional_world_data(self, files, world_id: bytes):
@@ -921,6 +962,12 @@ def _add_world_data_methods():
             if by_mode:
                 break
         self.r.add("slot world data ids (skins DLC table)", note=", ".join(f"mode {m}: {i:#x}" for m, i in sorted(by_mode.items())))
+        files.update(self.build_world_data(by_mode))
+
+    def build_world_data(self, by_mode):
+        """Dyers' Escort paths (mode 7) and Chest Capture spawn points (mode 2) as AdditionalWorldData entries
+        under the given ids -> {loose file name: DataFile}."""
+        files = {}
         H = lambda n: name_hash(ACB, n)
         if self.vip_paths and 7 in by_mode:
             vid = by_mode[7]
@@ -930,7 +977,7 @@ def _add_world_data_methods():
             fn = f"awd_-_{vid:016X}.data"
             files[fn] = _new_datafile(fn, [[H("AdditionalWorldData_TeamVIP"), "Unnamed", self.acb.encode(root)]])
             nodes = sum(len(pth.fields["Path"]) for pth in self.vip_paths)
-            self.r.add("escort: TeamVIP paths shipped under the slot world's id", n=len(self.vip_paths),
+            self.r.add("escort: TeamVIP paths shipped as world data", n=len(self.vip_paths),
                        note=f"{vid:#x}, {nodes} nodes")
         elif self.vip_paths:
             self.r.add("escort: slot world has no TeamVIP entry in the skins table -- paths NOT shipped")
@@ -968,14 +1015,39 @@ def _add_world_data_methods():
                 fn = f"awd_-_{cid:016X}.data"
                 files[fn] = _new_datafile(fn, [[H("AdditionalWorldData_ChestCapture"), "Unnamed", self.acb.encode(root)]]
                                           + [s_ for _n, _u, s_ in chest])
-                self.r.add("chest capture: chest spawn points shipped under the slot world's id", n=len(chest),
+                self.r.add("chest capture: chest spawn points shipped as world data", n=len(chest),
                            note=f"{cid:#x}: " + ", ".join(n for n, _u, _s in chest))
             else:
                 self.r.add("chest capture: no SpawnType-3 entities found -- NOT shipped")
+        return files
+
+    def base_world_data(self, out_forge, donor_world_id):
+        """Non-DLC map: the skins DLC table (OnlineMenuController+0x5950) has no row for our World, and only those
+        packages fill it. Build the world-data entries under fresh ids into <out_forge>.awd/ plus awd.json, from which
+        patch_skins_awd.py adds them and a row for our World to the skins forges (retail keeps every map's world data
+        as dependency-free entries there). Ids: the data entries are shared by both skins forges like retail's; each
+        forge gets its own holder ids (retail's differ per package)."""
+        self._next_id = self.slot_world_id + 0x10000
+        by_mode = {2: self.alloc_id(), 7: self.alloc_id()}
+        awd = self.build_world_data(by_mode)
+        out = out_forge + ".awd"
+        shutil.rmtree(out, ignore_errors=True)
+        os.makedirs(out)
+        entries = {}
+        for fn, df in awd.items():
+            open(os.path.join(out, fn), "wb").write(df.build(Game.BROTHERHOOD))
+            entries[fn] = derive_uid_and_ext(df.subs[0][2], True)[0]
+        meta = {"world": self.slot_world_id, "donor_world": donor_world_id, "modes": by_mode, "entries": entries,
+                "holder_ids": [[self.alloc_id() for _ in range(4)] for _forge in range(2)]}
+        json.dump(meta, open(os.path.join(out, "awd.json"), "w"), indent=1)
+        self.r.add("base map: world data written for patch_skins_awd.py",
+                   note=f"{out}: " + ", ".join(f"mode {m}: {i:#x}" for m, i in sorted(by_mode.items())))
 
     Converter.alloc_id = alloc_id
     Converter.add_additional_world_data = add_additional_world_data
     Converter.override_slot_world_data = override_slot_world_data
+    Converter.build_world_data = build_world_data
+    Converter.base_world_data = base_world_data
 
 
 _add_world_data_methods()
@@ -986,11 +1058,22 @@ def main():
     ap.add_argument("acr_forge")
     ap.add_argument("acb_multi_dir")
     ap.add_argument("out_forge")
-    ap.add_argument("--slot", default="AC2MP_Alhambra")
+    ap.add_argument("--slot", default="AC2MP_Alhambra", help="DLC map slot to take over (DataPC_<slot>_dlc.forge)")
+    ap.add_argument("--base", default=None,
+                    help="non-DLC map instead: GameBootstrap LoadInfo world name to take over (bootstrap_worlds.json), "
+                         "e.g. AC2MP_ludotest; out_forge must then be named DataPC_<name>.forge")
+    ap.add_argument("--donor", default="AC2MP_SanMarco", help="--base: base map giving sound bank, MP messages, MetaFile")
     ap.add_argument("--work", default=None)
     ap.add_argument("--remap-acfe-templates", action="store_true",
                     help="also swap ACR shader templates shipped in the forge for same-named ACB ones")
     args = ap.parse_args()
+    if args.base:
+        args.slot = None
+        base_id = json.load(open(os.path.join(HERE, "bootstrap_worlds.json")))[args.base]
+        want = f"DataPC_{args.base[:19]}.forge"  # GetWorldAlternateSourcePrefixName copies the name into char[20]
+        if os.path.basename(args.out_forge) != want:
+            ap.error(f"--base {args.base}: the game will look for {want}")
+    ref_forge = f"DataPC_{args.slot}_dlc.forge" if args.slot else f"DataPC_{args.donor}.forge"
 
     r = Report()
     work = args.work or tempfile.mkdtemp(prefix="acrport_")
@@ -1003,26 +1086,30 @@ def main():
     conv.remap_layers()
     conv.remap_templates(args.remap_acfe_templates)
     conv.remap_deps(files)
-    conv.encode_all(skip_types=("ContentPackage",) if args.slot else ())
+    conv.encode_all(skip_types=("ContentPackage",))
     conv.substitute_opaque(files, args.acb_multi_dir)
     conv.materialize_moves(files)
-    s_entries = conv.register_slot(files, args.acb_multi_dir, args.slot, work) if args.slot else []
     if args.slot:
+        s_entries = conv.register_slot(files, args.acb_multi_dir, args.slot, work)
         conv.override_slot_world_data(files, args.acb_multi_dir)
-        add_mp_message_scene(conv, files, args.acb_multi_dir, f"DataPC_{args.slot}_dlc.forge")
-        add_reference_deps(conv, files, f"DataPC_{args.slot}_dlc.forge")
+    else:
+        s_entries = conv.register_base(files, args.acb_multi_dir, args.base, base_id, args.donor, work)
+    add_mp_message_scene(conv, files, args.acb_multi_dir, ref_forge)
+    add_reference_deps(conv, files, ref_forge)
     vendor_dependencies(files, args.acb_multi_dir, conv.acb_idx, r)
-    if args.slot:
-        # the rest of ACB knows the slot's World by id (AssassinSoundSettings in DataPC.forge, skins DLC package
-        # descriptors), so the ported World must take that id -- otherwise the map never finishes loading
-        renumber_object(conv, files, conv.world_id, conv.slot_world_id)
+    # the rest of ACB knows the map's World by id (slot: AssassinSoundSettings in DataPC.forge, skins DLC package
+    # descriptors; base: GameBootstrap LoadInfo -> forge name), so the ported World must take that id -- otherwise
+    # the map never finishes loading
+    renumber_object(conv, files, conv.world_id, conv.slot_world_id)
+    if args.base:
+        conv.base_world_data(args.out_forge, conv.donor_world_id)
 
     out_dir = os.path.join(work, "out")
     shutil.rmtree(out_dir, ignore_errors=True)
     os.makedirs(out_dir)
     # MetaFile: it carries the package changelist (matches ContentPackage's
-    # MinimumChangelistNumber), so take the slot's when we took its package
-    src_dir = os.path.join(work, "slot" if args.slot else "src")
+    # MinimumChangelistNumber), so take the slot's when we took its package; base maps: the donor's
+    src_dir = os.path.join(work, "slot" if args.slot else "donor")
     for fn in os.listdir(src_dir):
         if fn.endswith(".MetaFile"):
             shutil.copy(os.path.join(src_dir, fn), os.path.join(out_dir, fn))

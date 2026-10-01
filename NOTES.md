@@ -242,3 +242,23 @@ Draft CXB entry for option 1 (ids 0xd7e50010/11 unused in ACB + the XML; names/i
 own): add `<UnlockableUnlockCondition>` (UnlockableRef 3622109200, UnlockConditionLevel 1) and a ReferenceList
 `<UnlockableMap>` objID 3622109200 with MpWorld objID 3622109201, World 3757198404, TimeOfDay 12.0; bump both
 Array_Size attributes.
+
+## Base (non-DLC) map build -- `convert.py --base AC2MP_ludotest`
+
+Chosen route (players all get the edited forge files): Dyers' World takes the id of an unused LoadInfo world,
+AC2MP_ludotest (0xdff24c44; referenced nowhere but LoadInfo), so the game loads it from
+`multi/DataPC_AC2MP_ludotest.forge`. `bootstrap_worlds.json` (from `bootstrap_worlds.py DataPC.forge`) maps names -> ids.
+
+    python3 convert.py <Dyers forge> <retail ACB multi> out/base/DataPC_AC2MP_ludotest.forge --base AC2MP_ludotest --remap-acfe-templates
+    python3 patch_skins_awd.py out/base/DataPC_AC2MP_ludotest.forge.awd <INSTALLED multi> out/base/skins
+    python3 verify_base.py out/base/DataPC_AC2MP_ludotest.forge out/base/skins
+    ./base_test.sh install          # + add cxb_dyers_entry.xml to the CXB's mapmanagermulti.xml
+
+- register_base: no ContentPackage/MpWorld/DLC addons, DLCWorldComponent removed (base Worlds have none), World
+  renamed + renumbered; donor base map (default San Marco) gives the sound bank id, the MP message scene and the MetaFile.
+- World data: retail keeps every map's AdditionalWorldData as dependency-free entries in skins_0001 (modes 2/7) and
+  skins_0002 (2/7/6), each with an 11-world holder table. convert.py writes Dyers' Chest/Escort entries under fresh
+  ids to `<out>.awd/` + awd.json; patch_skins_awd.py adds them to both forges plus a holder copied from the donor's
+  (mode 6 Assassinate stays on the donor's data). Use the installed skins as input: the game folder's skins_0002 is a
+  community edit (differs from vbox retail). Untouched round trip of both skins forges is content-identical.
+- Menu entry: `cxb_dyers_entry.xml` (San Marco's name strings + DataPC_extra images until we add our own).

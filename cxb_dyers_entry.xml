@@ -1,0 +1,56 @@
+<!-- Dyers as a non-DLC map: add to ACB-2.0-Server-Configuration/mapmanagermulti.xml.
+     1) the UnlockableUnlockCondition goes into <m_UnlockConditionList> (Array_Size 15 -> 16)
+     2) the Reference goes into <m_ReferenceList> (Array_Size 12 -> 13)
+     World 3757198404 = 0xdff24c44 = GameBootstrap LoadInfo "AC2MP_ludotest" -> the game loads multi/DataPC_AC2MP_ludotest.forge
+     (and hides the entry for players who don't have that file). Unlockable/MpWorld objIDs 0xd7e50010/11 are unused in ACB.
+     Name/description strings and both images are San Marco's for now: ACB has no "Dyers" string, and menu images
+     must be in a forge that's always loaded (base maps keep theirs in DataPC_extra.forge). -->
+
+            <UnlockableUnlockCondition memberName="UnlockConditionList">
+                <Handle propertyName="UnlockableRef" objID="3622109200"/>
+                <Pointer propertyName="UnlockConditionRef" classID="1688405200">
+                    <UnlockConditionLevel memberName="UnlockConditionRef">
+                        <Level value="1"/>
+                    </UnlockConditionLevel>
+                </Pointer>
+            </UnlockableUnlockCondition>
+
+            <Reference propertyName="ReferenceList" classID="614032972" objID="3622109200">
+                <UnlockableMap memberName="ReferenceList">
+                    <Icon value="386389562"/>
+                    <UIString memberName="NameString">
+                        <OasisLineID value="307775"/>
+                    </UIString>
+                    <UIString memberName="DescriptionString">
+                        <OasisLineID value="307784"/>
+                    </UIString>
+                    <UIString memberName="UnlockDescriptionString">
+                        <OasisLineID value="-1"/>
+                    </UIString>
+                    <UIString memberName="EvolutionInfoString">
+                        <OasisLineID value="-1"/>
+                    </UIString>
+                    <UIString memberName="ControlDescString">
+                        <OasisLineID value="-1"/>
+                    </UIString>
+                    <UIString memberName="ParamDescString">
+                        <OasisLineID value="-1"/>
+                    </UIString>
+                    <Index value="0"/>
+                    <InitiallyHidden value="false"/>
+                    <Reference propertyName="MapReference" classID="2382761820" objID="3622109201">
+                        <MpWorld memberName="MapReference">
+                            <Handle propertyName="World" objID="3757198404"/>
+                            <TimeOfDay value="12.0"/>
+                            <UIString memberName="DisplayName">
+                                <OasisLineID value="307775"/>
+                            </UIString>
+                            <UIString memberName="Description">
+                                <OasisLineID value="307784"/>
+                            </UIString>
+                            <Handle propertyName="TopViewImg" objID="25183676"/>
+                            <Handle propertyName="PreviewImg" objID="1916454896"/>
+                        </MpWorld>
+                    </Reference>
+                </UnlockableMap>
+            </Reference>
