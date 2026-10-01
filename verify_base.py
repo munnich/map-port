@@ -1,7 +1,7 @@
 """verify_base.py <map.forge> <skins_dir> [<menu_dir> [mapmanagermulti.xml]]: the non-DLC build is wired up -- the
 map's World has the LoadInfo id its file name maps to (bootstrap_worlds.json) and no DLC registration left, each
 patched skins forge has a holder for that World whose mode-2/7 data entries exist in the same forge, and (with
-menu_dir) skins_0001 has the menu images + name/description lines in every text package, and the CXB XML's entry
+menu_dir) every skins forge has the name/description lines in every text package and skins_0001 the menu images, and the CXB XML's entry
 for the World uses exactly those ids."""
 import json, os, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -46,18 +46,23 @@ if len(sys.argv) > 3:
     menu = json.load(open(os.path.join(sys.argv[3], "menu.json")))
     lines = set(menu["line_ids"])
     imgs = {v["id"] for v in menu["images"].values()}
-    f = "DataPC_skins_0001_00000002_dlc.forge"
-    ids, pk = set(), []
-    for e, subs, _d in forge_items(os.path.join(skins, f)):
-        ids.add(e.id)
-        for ext, n, uid, p in subs:
-            if ext != "ERR" and ACB_T.name_of(ext) == "LocalizationPackage":
-                o = c.decode(p).obj
-                if u32(o.fields["Type"]) == 0:
-                    pk.append((e.name, {u32(x.fields["TextID"]) for x in o.fields["LocalizedData"]}))
-    miss = [n for n, got in pk if not lines <= got]
-    print(f, "menu images", "present" if imgs <= ids else "MISSING", f"/ lines in {len(pk) - len(miss)}/{len(pk)} text packages")
-    bad += (not imgs <= ids) + len(miss) + (not pk)
+    for f in sorted(x for x in os.listdir(skins) if x.endswith(".forge")):
+        ids, pk = set(), []
+        for e, subs, _d in forge_items(os.path.join(skins, f)):
+            ids.add(e.id)
+            for ext, n, uid, p in subs:
+                if ext != "ERR" and ACB_T.name_of(ext) == "LocalizationPackage":
+                    o = c.decode(p).obj
+                    if u32(o.fields["Type"]) == 0:
+                        pk.append((e.name, {u32(x.fields["TextID"]) for x in o.fields["LocalizedData"]}))
+        miss = [n for n, got in pk if not lines <= got]
+        # only the highest-priority collection is kept (CleanUpCollections), so every skins forge needs the lines
+        print(f, f"lines in {len(pk) - len(miss)}/{len(pk)} text packages", end="")
+        bad += len(miss) + (not pk)
+        if "0001" in f:  # images are found by id from any source; they live in skins_0001
+            print(", menu images", "present" if imgs <= ids else "MISSING", end="")
+            bad += not imgs <= ids
+        print()
     if len(sys.argv) > 4:
         import xml.etree.ElementTree as ET
         r = ET.parse(sys.argv[4]).getroot()

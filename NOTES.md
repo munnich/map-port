@@ -263,6 +263,7 @@ AC2MP_ludotest (0xdff24c44; referenced nowhere but LoadInfo), so the game loads 
   (mode 6 Assassinate stays on the donor's data). Use the installed skins as input: the game folder's skins_0002 is a
   community edit (differs from vbox retail). Untouched round trip of both skins forges is content-identical.
 - Menu entry: `cxb_dyers_entry.xml`; its strings/images live in skins_0001 (below).
+- Login failures 13:10-13:26 were server-side (identical files failed then worked; A/B CXBs + skins variants).
 - Test 1 (base build, San Marco strings/images): map loads; Chest Capture: chests visible, zones still missing,
   can't capture (same as the slot build) -- parked, lower priority.
 
@@ -274,7 +275,9 @@ AC2MP_ludotest (0xdff24c44; referenced nowhere but LoadInfo), so the game loads 
   `LocalizationPackage::GetLocalizedStringRaw` binary-searches the plain `LocalizedData` array (LocalizedString
   {TextID u32, Text LSTRING}) before the compressed blob. Retail leaves LocalizedData empty everywhere, so new
   lines go there: 9000001 "DYERS" (ACR's own name, line 338599 / TempString in ACR's UnlockableMap "Map Dyers"),
-  9000002 a description (ACR has none), English text in all 16 text (Type 0) packages of skins_0001.
+  9000002 a description (ACR has none), English text in all 16 text (Type 0) packages of skins_0001 AND skins_0002:
+  `LocalizationManager::CleanUpCollections` keeps only the highest-priority collection (skins_0002 = 14 > skins_0001 =
+  12 > skins_0000 = 11; each a full copy of the text), so lines only in skins_0001 were never shown (in-game test).
   Encoding checked against LocalizationPackage::FastLoad: count, then per element id(4) + class hash(4) + TextID +
   u32 len + UTF-16 incl. NUL.
 - Images: ACR's MpWorld_Dyers uses placeholders (TopViewImg = Rome loading screen, PreviewImg = Knight Hospital);

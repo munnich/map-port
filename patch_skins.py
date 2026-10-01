@@ -8,11 +8,14 @@ community edit; a <forge>.pre_dyers left by base_test.sh install is preferred) a
   - the map's AdditionalWorldData entries, as dependency-free entries like retail keeps every map's;
   - a holder for the map's World appended to the element: a copy of the donor map's holder with fresh ids, modes 2
     (Chest Capture) and 7 (Escort) pointed at our entries, other modes (6, Assassinate) left on the donor's data.
---menu (menu_assets.py output), skins_0001 only -- CharacterSkinsDLCElement::OnPackageLoaded makes each skins forge a
-  LoadOnDemand source and adds its localization packages as a collection:
-  - the map's menu image entries (PreviewImg / TopViewImg of the CXB MpWorld);
+--menu (menu_assets.py output) -- CharacterSkinsDLCElement::OnPackageLoaded makes each skins forge a LoadOnDemand
+  source and adds its localization packages as a collection:
+  - the map's menu image entries (PreviewImg / TopViewImg of the CXB MpWorld), skins_0001 only (found by id from any
+    source);
   - its name/description lines, in the plain LocalizedData array of every text (Type 0) LocalizationPackage, which
-    GetLocalizedStringRaw searches before the compressed blob."""
+    GetLocalizedStringRaw searches before the compressed blob -- in BOTH forges: LocalizationManager::CleanUpCollections
+    keeps only the highest-priority collection (skins_0002: 14 > skins_0001: 12 > skins_0000: 11; each is a full
+    copy), so lines only in skins_0001 are never read while skins_0002 is installed."""
 import argparse, copy, json, os, shutil, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from convert import ACB, ACB_T, Game, create_entry, idb, load_forge, name_hash, repack, u32, walk
@@ -94,7 +97,7 @@ def add_entries(work, entries, src_dir, names_ids, tag):
     return added
 
 
-def patch(forge, out_dir, work, awd, awd_dir, holder_ids, menu, menu_dir, parts=("strings", "images")):
+def patch(forge, out_dir, work, awd, awd_dir, holder_ids, menu, menu_dir, parts=("strings", "images"), strings_menu=None):
     acb = Codec(ACB_T)
     tag = os.path.basename(forge).replace(".pre_dyers", "")
     shutil.rmtree(work, ignore_errors=True)
@@ -102,8 +105,8 @@ def patch(forge, out_dir, work, awd, awd_dir, holder_ids, menu, menu_dir, parts=
     added = []
     if awd:
         add_world_data(files, acb, awd, holder_ids, tag)
-    if menu and "strings" in parts:
-        add_strings(files, acb, menu)
+    if strings_menu and "strings" in parts:
+        add_strings(files, acb, strings_menu)
     for fn, df in files.items():
         if getattr(df, "dirty", False):
             open(os.path.join(work, fn), "wb").write(df.build(Game.BROTHERHOOD))
@@ -135,7 +138,7 @@ def main():
             src += ".pre_dyers"
         print(forge, "<-", os.path.basename(src))
         patch(src, args.out_dir, os.path.join(work, forge), awd, args.awd, hids,
-              menu if forge == MENU_FORGE else None, args.menu, args.menu_parts.split(","))
+              menu if forge == MENU_FORGE else None, args.menu, args.menu_parts.split(","), strings_menu=menu)
     shutil.rmtree(work, ignore_errors=True)
 
 
