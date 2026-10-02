@@ -393,6 +393,11 @@ all 580 entries + the 1271 LoadInfo rows are unchanged except the 8 FileNames. `
 (original kept as `DataPC.forge.pre_acfe`, restored by uninstall) and removes old slot-named map forges. Every player
 now needs the edited DataPC.forge too.
 
+Colorblind variant: `python3 patch_bootstrap.py --src ~/Documents/acb/DataPC.forge --out out/maps/colorblind` applies
+the same LoadInfo renames to the colorblind speed/chase-boost FX build of DataPC.forge (its other 579 entries come out
+byte-identical after decompression). Players using that build need this patched copy instead of out/maps/DataPC.forge,
+or the ported maps won't load. install_maps.sh still installs the retail-based one.
+
 ## Chase breakers = a Scene in ACB (2026-10-02)
 
 ACB's chase breakers (San Marco `AC2MP_GEN_Chasebreaker_door_34_Group_*`, `AC2MP_GEN_Door_chasebreaker_36_Group_*`)

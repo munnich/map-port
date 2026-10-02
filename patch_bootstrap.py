@@ -4,7 +4,8 @@ own names (maps.json "name", e.g. ACFE_Souk), so each map ships as multi/DataPC_
 ACB finds a non-DLC map's forge via World::GetWorldAlternateSourcePrefixName -> GameBootstrap::GetObjectName: the
 LoadInfo FileName of the World's id ("Game Bootstrap Settings" in DataPC.forge), copied into char[20] -> at most 19
 chars. Only FileName changes; the id stays the slot world's. Input: the installed DataPC.forge's unpatched original
-(DataPC.forge.pre_acfe, left by install_maps.sh; else the live file). Output: out/maps/DataPC.forge."""
+(DataPC.forge.pre_acfe, left by install_maps.sh; else the live file), or --src. Output: out/maps/DataPC.forge
+(--out DIR for another variant, e.g. --src ~/Documents/acb/DataPC.forge --out out/maps/colorblind)."""
 import argparse, json, os, shutil, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from convert import ACB_T, HERE, Game, load_forge, repack, u32
@@ -32,12 +33,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=os.path.join(HERE, "out", "maps"))
     ap.add_argument("--work", default=None)
+    ap.add_argument("--src", default=None, help="DataPC.forge to patch instead of the installed original "
+                    "(e.g. a colorblind-FX build); output keeps everything else in it as is")
     args = ap.parse_args()
     renames = {m["slot"]: map_name(m) for m in CFG["maps"].values() if map_name(m) != m["slot"]}
     if len(set(renames.values())) != len(renames) or any(len(m.get("name", "")) > 19 for m in CFG["maps"].values()):
         sys.exit("map names must be unique and at most 19 chars")
-    src = os.path.join(CFG["acb_installed"], FORGE)
-    if os.path.exists(src + SAVE):
+    src = args.src or os.path.join(CFG["acb_installed"], FORGE)
+    if not args.src and os.path.exists(src + SAVE):
         src += SAVE
     work = args.work or os.path.join(args.out, "_work_datapc")
     shutil.rmtree(work, ignore_errors=True)
