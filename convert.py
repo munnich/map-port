@@ -61,6 +61,7 @@ STANDARD_MODES = {"ACFE_Wanted", "ACFE_Manhunt", "ACFE_Assassinate", "ACFE_Escor
 CHEST_MODES = {"ACFE_Chest_Capture"}
 CHEST_TARGET_LAYER = "gamemode_teamwanted"
 NEVER_LAYER = "Test_AI_Detection"  # an ACB DataLayer (DataPC.forge) no MP mode activates
+NEVER_LAYER_ID = 0xC1BD0EEB
 
 
 def layer_mode(name: str) -> str:
@@ -857,6 +858,81 @@ def add_mp_message_scene(conv, files, acb_dir, slot_forge):
         conv.r.add("mp message scene: object copied into top cell", note=f"{ACB_T.name_of(ext)} {name}")
 
 
+def add_grid_anchor(conv, files):
+    """ACB MP streams grid cells around a FIXED point, not the player: GridLoadingAdvisor::ExecuteRequests (normal
+    mode) takes GetGridReferenceForcedPosition = the World's DefaultTransitionPortal's linked entity position, else
+    (0,0), with radius GridPartition.LoadingRangeTable[cell at that point] (u8 metres; ACR maps: 95). ACB's and the
+    ACFE_* maps' play areas sit within ~80 m of the origin; Souk / Rhodes / Juderia are slices of one 1 km world
+    whose play areas are 120-160 m away -> their level-0 cells (detailed buildings + collision) never loaded, only
+    the always-loaded top cell (ground) and coarse levels. So for an off-centre map: a bare anchor Entity at the
+    centroid of the active spawn points + a WorldTransitionPortal linking it (both in the World's own entry, which
+    loads with the World, before any cell request) as DefaultTransitionPortal, and every LoadingRangeTable entry
+    raised to cover the play area around it."""
+    import copy, math, struct
+    never = NEVER_LAYER_ID
+    world_df = next(df for df in files.values() if df.subs and ACB_T.name_of(df.subs[0][0]) == "World")
+    spawns, template, part_loc = [], None, None
+    for df in files.values():
+        for i, sub in enumerate(df.subs):
+            t = ACB_T.name_of(sub[0])
+            if t == "GridPartition":
+                part_loc = (df, i)
+            if t != "Entity":
+                continue
+            try:
+                root = conv.acb.decode(sub[2])
+            except DecodeError:
+                continue
+            o = root.obj
+            comps = {ACB_T.name_of(c.obj.type_hash) for c in o.fields.get("Components", []) if getattr(c, "obj", None)}
+            if "MultiSpawnPlayerComponent" not in comps:
+                continue
+            if any(u32(a.fields["Layer"].id) == never for a in o.fields["DataLayerFilter"].fields["LayerActions"]):
+                continue
+            spawns.append(struct.unpack_from("<3f", o.fields["GlobalMatrix"], 48))
+            if template is None:
+                template = root
+    cx = sum(p[0] for p in spawns) / len(spawns)
+    cy = sum(p[1] for p in spawns) / len(spawns)
+    cz = sum(p[2] for p in spawns) / len(spawns)
+    reach = max(math.hypot(p[0] - cx, p[1] - cy) for p in spawns)
+    if math.hypot(cx, cy) < 30:
+        conv.r.add("grid anchor: play area centred on the origin, none needed", note=f"spawn centroid ({cx:.0f},{cy:.0f})")
+        return
+    anchor = copy.deepcopy(template)
+    # own id range (slot + 0x10300; world data uses +0x10000.., menu images +0x10400..), so no other id moves
+    saved = getattr(conv, "_next_id", None)
+    conv._next_id = conv.slot_world_id + 0x10300
+    aid, pid = conv.alloc_id(), conv.alloc_id()
+    if saved is None:
+        del conv._next_id
+    else:
+        conv._next_id = saved
+    anchor.obj.id = idb(aid)
+    anchor.obj.fields["Components"] = []
+    anchor.obj.fields["DataLayerFilter"].fields["LayerActions"] = []
+    m = bytearray(anchor.obj.fields["GlobalMatrix"])
+    m[0:48] = struct.pack("<12f", 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0)
+    m[48:60] = struct.pack("<3f", cx, cy, cz)
+    anchor.obj.fields["GlobalMatrix"] = bytes(m)
+    wtp = name_hash(ACB, "WorldTransitionPortal")
+    portal = Root(b"", 0, Obj(wtp, idb(pid), {"LinkedEntity": Ref(1, 0, idb(aid)), "PortalType": idb(0)}, 1))
+    world = conv.acb.decode(world_df.subs[0][2])
+    world.obj.fields["DefaultTransitionPortal"] = Ref(1, 0, idb(pid))
+    world_df.subs[0][2] = conv.acb.encode(world)
+    world_df.subs.append([anchor.obj.type_hash, "MP_GridAnchor", conv.acb.encode(anchor)])
+    world_df.subs.append([wtp, "MP_GridAnchor_Portal", conv.acb.encode(portal)])
+    # radius: the spawn spread plus room for the buildings around the outermost spawn points
+    radius = min(255, max(95, math.ceil(reach + 70)))
+    df, i = part_loc
+    part = conv.acb.decode(df.subs[i][2])
+    part.obj.fields["LoadingRangeTable"] = [bytes([radius]) for _ in part.obj.fields["LoadingRangeTable"]]
+    df.subs[i][2] = conv.acb.encode(part)
+    conv.r.add("grid anchor: cells now stream around the play area",
+               note=f"anchor {aid:#x} at ({cx:.0f},{cy:.0f},{cz:.0f}) via portal {pid:#x}; loading radius {radius} m "
+                    f"(spawn reach {reach:.0f} m, {len(spawns)} spawns)")
+
+
 def add_reference_deps(conv, files, slot_forge):
     """Make objects this map references loadable the way retail maps do. At runtime only the map's own forge and
     the global DataPC.forge are loaded, so a Ref / link to an object that lives only in another map's forge (e.g. a
@@ -1206,6 +1282,7 @@ def main():
     # descriptors; base: GameBootstrap LoadInfo -> forge name), so the ported World must take that id -- otherwise
     # the map never finishes loading
     renumber_object(conv, files, conv.world_id, conv.slot_world_id)
+    add_grid_anchor(conv, files)
     if args.base:
         conv.base_world_data(args.out_forge, conv.donor_world_id)
 

@@ -343,3 +343,22 @@ classified by name suffix (layer_mode): standard modes -> filter cleared; Chest_
 anything else -> Action 0 on `Test_AI_Detection` (DataLayer 0xc1bd0eeb, never active in MP) = never loaded.
 Souk after the fix: Hospital + DM OOB never, Souk OOB always, 21 FFA + 16 team spawns always, CTF/Hijack/DM spawns
 never, 11 chest spawns on gamemode_teamwanted. verify_maps.py flags objects filtered only on unresolvable layers.
+
+## MP streams grid cells around a fixed point, not the player (2026-10-02)
+
+After the MOPP + filter fixes, Souk / Knights Hospital / Ippokratous still showed only low-detail, walk-through
+buildings except in one corner. Runtime log (gdb dprintf on MeshShape::UpdateSDKObject + per-second counts): all
+collision built within ~2 s of the map forge opening, then nothing more in 3 minutes of running around; the only
+level-0 cells loaded were the ones within ~95 m of (0,0). Cause: `GridLoadingAdvisor::ExecuteRequests` (Mac
+0x51d540) in normal mode uses `GetGridReferenceForcedPosition` = the World's `DefaultTransitionPortal` linked entity
+position, else (0,0) -- set once at the first request -- with radius `GetLoadingDistance` = GridPartition
+`LoadingRangeTable[cell at that point]` (u8 metres, 95 in ACR maps). ACB's maps and the ACFE_* maps centre their play
+area on the origin (spawns within 80 m); Souk / Rhodes / Juderia are slices of one 1 km world centred 118-158 m away.
+(The 6-level grid itself is fine.)
+
+Fix (convert.add_grid_anchor, runs for maps whose active-spawn centroid is >30 m from the origin): a bare Entity
+(copy of a spawn entity without components/filters) at the spawn centroid plus a WorldTransitionPortal
+(LinkedEntity -> it, PortalType 0; only those two fields are serialized) appended to the World's own entry, which loads
+with the World before any cell request; World.DefaultTransitionPortal -> the portal; every LoadingRangeTable byte
+raised to spawn reach + 70 m (<= 255). Ids from slot + 0x10300. Results: Souk (10,-118) r 132, Knights Hospital
+(1,147) r 156, Ippokratous (158,39) r 134. Souk + Knights Hospital confirmed working in-game.
