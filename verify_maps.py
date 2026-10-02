@@ -4,8 +4,9 @@ Per map: its forge is named after its LoadInfo slot and its World has that slot'
 (ContentPackage / MpWorld / DLC addons / DLCWorldComponent). In out/maps/skins: each skins forge has a holder for the
 World whose mode-2/7 world data entries exist in that forge; every name/description line is in every text package of
 both forges (only the top-priority collection is read); every menu image is in skins_0001. In the server XML: one
-UnlockableMap per variant with exactly the menu.json lines, images, World and visibility."""
-import json, os, sys
+UnlockableMap per variant with exactly the menu.json lines, images, World and visibility. Per map also: no MeshShape
+keeps ACR's MOPP, no object is filtered only on layers ACB can't resolve (=> loaded in every mode)."""
+import json, os, pickle, sys
 import xml.etree.ElementTree as ET
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from analyze import forge_items
@@ -13,6 +14,8 @@ from convert import ACB_T, HERE, u32, walk
 from anvilforge.fastload import Codec
 
 CFG = json.load(open(os.path.join(HERE, "maps.json")))
+GLOBAL_LAYERS = {i for i, v in pickle.load(open(os.path.join(HERE, "acb_multi_idx.pkl"), "rb")).items()
+                 if v.get("DataPC.forge", ("",))[0] == "DataLayer"}
 SKINS = ("DataPC_skins_0001_00000002_dlc.forge", "DataPC_skins_0002_00000004_dlc.forge")
 c = Codec(ACB_T)
 bad = 0
@@ -34,7 +37,7 @@ for k in keys:
     wid = worlds[m["slot"]]
     menus[k] = json.load(open(os.path.join(d, "menu", "menu.json")))
     awds[k] = json.load(open(os.path.join(d, f"DataPC_{m['slot'][:19]}.forge.awd", "awd.json")))
-    types, w, mopp5 = {}, None, 0
+    types, w, mopp5, deadfilter = {}, None, 0, []
     for e, subs, _d in forge_items(os.path.join(d, f"DataPC_{m['slot'][:19]}.forge")):
         for ext, n, uid, p in subs:
             t = ACB_T.name_of(ext) if ext != "ERR" else "ERR"
@@ -44,9 +47,23 @@ for k in keys:
                            if getattr(x, "obj", None) is not None])
             elif t == "MeshShape":  # 5 = "trust ACR's MOPP" -> collision holes (see convert.patch_fields)
                 mopp5 += u32(c.decode(p).obj.fields["MoppCodeVersionNumber"]) == 5
+            elif t in ("Entity", "EntityGroup"):  # a filter with no resolvable layer loads in every mode
+                try:
+                    root = c.decode(p).obj
+                except Exception:
+                    continue
+                for o in walk(root):
+                    dlf = o.fields.get("DataLayerFilter")
+                    if dlf is not None and getattr(dlf, "fields", None) and dlf.fields["LayerActions"]:
+                        layers = {u32(a.fields["Layer"].id) for a in dlf.fields["LayerActions"]}
+                        if not layers & GLOBAL_LAYERS:
+                            deadfilter.append(n)
     print(f"{k}: World {w[0]:#x} (slot {m['slot']} {wid:#x}), {types.get('MeshShape', 0)} MeshShapes")
     if mopp5:
         problem(f"{k}: {mopp5} MeshShapes keep ACR's MOPP (MoppCodeVersionNumber 5)")
+    if deadfilter:
+        problem(f"{k}: {len(deadfilter)} objects filtered only on layers ACB can't resolve (loaded in every mode): "
+                f"{deadfilter[:5]}")
     if w[0] != wid or "DLCWorldComponent" in w[1]:
         problem(f"{k}: World id / DLCWorldComponent")
     for t in ("ContentPackage", "MpWorld", "MpMapsDLCAddon", "SoundBankDLCAddon", "SoundPackagesDLCAddon", "ERR"):

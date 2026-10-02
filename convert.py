@@ -60,6 +60,16 @@ ACR_ONLY_TYPES = set(ACR.types_by_hash) - set(ACB.types_by_hash)
 STANDARD_MODES = {"ACFE_Wanted", "ACFE_Manhunt", "ACFE_Assassinate", "ACFE_Escort", "ACFE_Corruption"}
 CHEST_MODES = {"ACFE_Chest_Capture"}
 CHEST_TARGET_LAYER = "gamemode_teamwanted"
+NEVER_LAYER = "Test_AI_Detection"  # an ACB DataLayer (DataPC.forge) no MP mode activates
+
+
+def layer_mode(name: str) -> str:
+    """'standard' / 'chest' / 'other' for an ACR layer name: ACFE_<Mode> or <Region>_<Map>_<Mode>."""
+    if name.endswith(("Wanted", "Manhunt", "Assassinate", "Escort", "Corruption")):
+        return "standard"
+    if name.endswith("Chest_Capture"):
+        return "chest"
+    return "other"
 # custom-serialized types whose format ACR and ACB share (checked on maps both games ship) -- safe to keep in ACR form
 SHARED_OPAQUE = {"FX", "MaterialTemplate", "NavMeshManager", "PropertyControllerData"}
 
@@ -266,30 +276,53 @@ class Converter:
         wdlm.obj.fields["LayersConfig"] = [a for a in assoc if u32(a.fields["Layer"].id) not in acr_only_layers]
         self.r.add("layers: ACR-only layer associations removed", n=len(assoc) - len(wdlm.obj.fields["LayersConfig"]))
 
-        # entity filters
+        # entity filters. ACB's DataLayerFilter::ShouldAssociatedObjectBeLoaded skips every layer whose handle doesn't
+        # resolve, and a filter left with no resolvable layer loads its object in EVERY mode. ACR filters on layers ACB
+        # doesn't have: ACFE_<Mode> and, in the shared Rhodes world (Souk/Rhodes/Juderia), <Region>_<Map>_<Mode> plus
+        # other maps' layers -- left alone, Knights Hospital's out-of-bounds volume (in Souk's top cell) killed every
+        # Souk spawn. So by the mode the dead layers name: standard modes -> filter cleared (always loaded, like the
+        # moved mode objects); Chest Capture -> gamemode_teamwanted; anything else -> a layer MP never activates.
         tw_handle = Handle(0, idb(tw))
+        global_layers = self.acb_global_layers()
+        never_handle = Handle(0, idb(next(i for i, n in global_layers.items() if n == NEVER_LAYER)))
+
+        def retarget(proto, handle):
+            new = Obj(proto.type_hash, proto.id, dict(proto.fields), proto.flag)
+            new.fields["Layer"] = handle
+            new.fields["Action"] = idb(0)
+            return new
+
         for t in self.trees.values():
             for o in walk(t.obj):
                 dlf = o.fields.get("DataLayerFilter")
                 if not isinstance(dlf, Obj):
                     continue
                 acts = dlf.fields["LayerActions"]
-                lids = [u32(a.fields["Layer"].id) for a in acts]
-                if not any(l in acr_only_layers for l in lids):
+                dead = [a for a in acts if u32(a.fields["Layer"].id) not in global_layers]
+                if not dead:
                     continue
-                ns = {names.get(l, self.layer_name(l)) for l in lids}
-                keep = [a for a in acts if u32(a.fields["Layer"].id) not in acr_only_layers]
-                if ns & STANDARD_MODES:
+                keep = [a for a in acts if u32(a.fields["Layer"].id) in global_layers]
+                modes = {layer_mode(names.get(u32(a.fields["Layer"].id)) or self.layer_name(u32(a.fields["Layer"].id)))
+                         for a in dead if u32(a.fields["Action"]) == 0}
+                if "standard" in modes:
                     dlf.fields["LayerActions"] = keep
                     self.r.add("filters: cleared (standard modes)")
-                elif ns & CHEST_MODES:
-                    proto = acts[0]
-                    new = Obj(proto.type_hash, proto.id, dict(proto.fields), proto.flag)
-                    new.fields["Layer"] = tw_handle
-                    dlf.fields["LayerActions"] = keep + [new]
+                elif "chest" in modes:
+                    dlf.fields["LayerActions"] = keep + [retarget(dead[0], tw_handle)]
                     self.r.add("filters: -> " + CHEST_TARGET_LAYER)
-                else:
-                    self.r.add("filters: left on ACR-only layers (object never loaded)")
+                elif modes:
+                    dlf.fields["LayerActions"] = keep + [retarget(dead[0], never_handle)]
+                    self.r.add("filters: other-mode/other-map only -> never loaded (" + NEVER_LAYER + ")",
+                               note=", ".join(sorted({names.get(u32(a.fields["Layer"].id))
+                                                      or self.layer_name(u32(a.fields["Layer"].id)) for a in dead}))[:150])
+                else:  # only "unload while active" actions on dead layers: they can never fire in ACB either
+                    dlf.fields["LayerActions"] = keep
+                    self.r.add("filters: dead unload-actions dropped")
+
+    def acb_global_layers(self):
+        """{id: name} of the DataLayers ACB can resolve in a match: the ones in DataPC.forge (always mounted)."""
+        multi = pickle.load(open(os.path.join(HERE, "acb_multi_idx.pkl"), "rb"))
+        return {i: v["DataPC.forge"][1] for i, v in multi.items() if v.get("DataPC.forge", ("",))[0] == "DataLayer"}
 
     def materialize_moves(self, files):
         """Objects moved into a grid cell / layer block by remap_layers still live in their ACR layer's entry

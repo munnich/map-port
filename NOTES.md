@@ -325,3 +325,21 @@ with hkpMoppUtility::buildCode (tolerance 0.01) and sets the version to 5. conve
 shape (the field is ACB-only), so ACB ran ACR-compiled MOPPs. convert.patch_fields now writes 0 -> ACB compiles
 its own at load for every ported MeshShape (only MeshShape stores a MOPP; Box/Sphere shapes have none).
 verify_maps.py flags any ported MeshShape left at 5.
+
+## Layer filters ACB can't resolve load in EVERY mode (2026-10-01)
+
+Retest after the MOPP fix: Souk still "spawned in the middle with a dying animation" on every spawn. Runtime check
+(gdb dprintf on MeshShape::UpdateSDKObject, ACBMP.exe 0x016b3c40, + /proc/<pid>/fd forge list) showed Souk's forge
+loading and all its top-cell ground shapes built -> not collision. Cause: `DataLayerFilter::ShouldAssociatedObject
+BeLoaded` (Mac 0x1df270) skips LayerActions whose layer handle doesn't resolve; a filter with no resolvable layer
+returns "load" (Action 0 = load while layer active, else unload while active). Souk/Rhodes/Juderia are one shared ACR
+world: entities are filtered on `Rhodes_<Map>_<Mode>` layers (+ unknown ids for other maps), none of which exist in
+ACB, and convert.py only remapped `ACFE_<Mode>` layers listed in the WDLM. So Knights Hospital's OOB volume (in
+Souk's top cell, filtered on two unknown layers) was live in Souk -> instant out-of-bounds death. The other maps had
+the same leak for Deathmatch/CTF/Hijack objects sitting in loaded cells (DM OOBs, DM spawns).
+
+Fix (remap_layers, entity filters): every LayerAction whose layer is not a DataLayer in ACB's DataPC.forge is
+classified by name suffix (layer_mode): standard modes -> filter cleared; Chest_Capture -> gamemode_teamwanted;
+anything else -> Action 0 on `Test_AI_Detection` (DataLayer 0xc1bd0eeb, never active in MP) = never loaded.
+Souk after the fix: Hospital + DM OOB never, Souk OOB always, 21 FFA + 16 team spawns always, CTF/Hijack/DM spawns
+never, 11 chest spawns on gamemode_teamwanted. verify_maps.py flags objects filtered only on unresolvable layers.
