@@ -1,16 +1,19 @@
 """build_maps.py [map ...] [--rebuild] [--no-xml]: port ACR maps to ACB as separate non-DLC maps, end to end.
 
 Config: maps.json (one entry per ACR map: source forge, LoadInfo slot, menu variants). Steps:
-  1. convert.py --base <slot> for each requested map (skipped if out/maps/<key>/DataPC_<slot>.forge exists, unless
+  1. convert.py --base <slot> --name <name> for each requested map (skipped if out/maps/<key>/DataPC_<name>.forge exists, unless
      --rebuild), then the per-forge checks (aligncheck, depcheck, blockcheck, validate, spawncheck);
   2. menu_assets.py: menu images + ACR name lines (all languages) per map;
   3. patch_skins.py: world data, lines and images of EVERY built map into the skins forges (out/maps/skins) --
      always all of them, since the installed skins forges must carry every installed map;
+     patch_bootstrap.py: DataPC.forge with the slots' LoadInfo entries renamed (out/maps/DataPC.forge; when maps.json
+     is newer than it);
   4. cxb_maps.py: the menu entries of every built map into the server's mapmanagermulti.xml (rebuild the CXB from
      it with CXBTool afterwards);
   5. verify_maps.py.
 Then ./install_maps.sh install."""
 import argparse, json, os, subprocess, sys
+from patch_bootstrap import map_name
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CFG = json.load(open(os.path.join(HERE, "maps.json")))
@@ -28,7 +31,7 @@ def run(cmd, log=None):
 
 
 def forge_path(key):
-    return os.path.join(HERE, "out", "maps", key, f"DataPC_{CFG['maps'][key]['slot'][:19]}.forge")
+    return os.path.join(HERE, "out", "maps", key, f"DataPC_{map_name(CFG['maps'][key])}.forge")
 
 
 def checks(key):
@@ -67,7 +70,7 @@ def main():
         if args.rebuild or not os.path.exists(forge_path(k)):
             os.makedirs(os.path.dirname(forge_path(k)), exist_ok=True)
             cmd = [sys.executable, "convert.py", os.path.join(CFG["acr_multi"], m["acr_forge"]), CFG["acb_retail"],
-                   forge_path(k), "--base", m["slot"], "--donor", m.get("donor", CFG["donor"]),
+                   forge_path(k), "--base", m["slot"], "--name", map_name(m), "--donor", m.get("donor", CFG["donor"]),
                    "--work", os.path.join(HERE, "out", "maps", k, "_work")]
             if m.get("remap_templates", True):
                 cmd.append("--remap-acfe-templates")
@@ -78,6 +81,9 @@ def main():
     built = [k for k in sorted(CFG["maps"], key=lambda k: CFG["maps"][k]["index"]) if os.path.exists(forge_path(k))
              and os.path.exists(os.path.join(HERE, "out", "maps", k, "menu", "menu.json"))]
     run([sys.executable, "patch_skins.py", *built])
+    bootstrap = os.path.join(HERE, "out", "maps", "DataPC.forge")
+    if not os.path.exists(bootstrap) or os.path.getmtime(bootstrap) < os.path.getmtime(os.path.join(HERE, "maps.json")):
+        run([sys.executable, "patch_bootstrap.py"])
     if not args.no_xml:
         run([sys.executable, "cxb_maps.py", *built])
     run([sys.executable, "verify_maps.py", *built])

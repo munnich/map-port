@@ -1,5 +1,5 @@
 {
- "_doc": "build_maps.py config. Paths: acr_multi = ACR install (sources), acb_retail = untouched ACB multi (converter input), acb_installed = the game's multi folder (skins forges are patched from its *.pre_dyers originals, falling back to the live files). Per map: index fixes every id the map gets (lines 9000000+100*index+2*variant+1/+2, CXB objIDs 0xd7e50010+0x10*index+2*variant/+1), so never reuse or reorder indices. slot = unused GameBootstrap LoadInfo World (bootstrap_worlds.json) whose name+id the map takes over; the game then loads multi/DataPC_<slot>.forge. variants = menu entries (CXB UnlockableMap + MpWorld): name_line = ACR line id (all languages are taken from ACR's DataPC_localization.forge), description = English text or null (ACR has none for these maps), tod = TimeOfDay, preview/loading = [forge, ACR TextureMapSpec entry, crop top (upright, 512px source -> 2:1 band)], forge 'extra' = ACR DataPC_extra.forge, 'map' = the map's own ACR forge.",
+ "_doc": "build_maps.py config. Paths: acr_multi = ACR install (sources), acb_retail = untouched ACB multi (converter input), acb_installed = the game's multi folder (skins forges are patched from its *.pre_dyers originals, falling back to the live files). Per map: index fixes every id the map gets (lines 9000000+100*index+2*variant+1/+2, CXB objIDs 0xd7e50010+0x10*index+2*variant/+1), so never reuse or reorder indices. slot = unused GameBootstrap LoadInfo World (bootstrap_worlds.json) whose name+id the map takes over; name = what the map is called instead (patch_bootstrap.py renames the slot's LoadInfo FileName in DataPC.forge, at most 19 chars); the game then loads multi/DataPC_<name>.forge. variants = menu entries (CXB UnlockableMap + MpWorld): name_line = ACR line id (all languages are taken from ACR's DataPC_localization.forge), description = English text or null (ACR has none for these maps), tod = TimeOfDay, preview/loading = [forge, ACR TextureMapSpec entry, crop top (upright, 512px source -> 2:1 band)], forge 'extra' = ACR DataPC_extra.forge, 'map' = the map's own ACR forge.",
  "acr_multi": "/home/a/Games/assassins-creed-revelations/drive_c/Program Files (x86)/Ubisoft/Ubisoft Game Launcher/Games/Assassin's Creed Revelations/multi",
  "acb_retail": "/home/a/vbox/Assassin's Creed Brotherhood/multi",
  "acb_installed": "/home/a/Games/assassins-creed-brotherhood/drive_c/Program Files (x86)/Ubisoft/Ubisoft Game Launcher/games/Assassin's Creed Brotherhood/multi",
@@ -7,7 +7,7 @@
  "donor": "AC2MP_SanMarco",
  "maps": {
   "dyers": {
-   "index": 0, "acr_forge": "DataPC_ACFE_Dyers_dlc.forge", "slot": "AC2MP_ludotest",
+   "index": 0, "acr_forge": "DataPC_ACFE_Dyers_dlc.forge", "slot": "AC2MP_ludotest", "name": "ACFE_Dyers",
    "variants": [
     {"name_line": 338599, "tod": 12.0,
      "description": "A maze of rooftop workshops where cloth is dyed in great stone vats and hung out to dry.",
@@ -15,7 +15,7 @@
    ]
   },
   "antioch": {
-   "index": 1, "acr_forge": "DataPC_ACFE_Antioch.forge", "slot": "AC2MP_WhiteWorld",
+   "index": 1, "acr_forge": "DataPC_ACFE_Antioch.forge", "slot": "AC2MP_WhiteWorld", "name": "ACFE_Antioch",
    "variants": [
     {"name_line": 334842, "tod": 12.0, "description": "A crusader city of crumbling ramparts and terraced streets climbing the hills above the Orontes.",
      "preview": ["extra", "Antioche_MapDesc", 128], "loading": ["extra", "Antioche_MapDesc", 128]},
@@ -24,7 +24,7 @@
    ]
   },
   "galata": {
-   "index": 2, "acr_forge": "DataPC_ACFE_Constantinople.forge", "slot": "AC2MP_AmboiseTest",
+   "index": 2, "acr_forge": "DataPC_ACFE_Constantinople.forge", "slot": "AC2MP_AmboiseTest", "name": "ACFE_Galata",
    "variants": [
     {"name_line": 334844, "tod": 12.0, "description": "Constantinople's busy harbour district, its crowded quays and markets watched over by the Galata Tower.",
      "preview": ["extra", "Constantinople_MapDesc", 128], "loading": ["extra", "Constantinople_MapDesc", 128]},
@@ -33,7 +33,7 @@
    ]
   },
   "jerusalem": {
-   "index": 3, "acr_forge": "DataPC_ACFE_Jerusalem_dlc.forge", "slot": "AC2MP_Marketing_Map",
+   "index": 3, "acr_forge": "DataPC_ACFE_Jerusalem_dlc.forge", "slot": "AC2MP_Marketing_Map", "name": "ACFE_Jerusalem",
    "variants": [
     {"name_line": 334843, "tod": 8.0, "description": "Narrow, crowded streets wind between ancient stone walls and sacred domes in the heart of the Holy City.",
      "preview": ["map", "Jerusalem_MapDesc", 128], "loading": ["map", "Jerusalem_MapDesc", 128]},
@@ -42,7 +42,7 @@
    ]
   },
   "ippokratous": {
-   "index": 4, "acr_forge": "DataPC_ACFE_Juderia.forge", "slot": "AC2MP_MSM_TEST",
+   "index": 4, "acr_forge": "DataPC_ACFE_Juderia.forge", "slot": "AC2MP_MSM_TEST", "name": "ACFE_Ippokratous",
    "variants": [
     {"name_line": 334845, "tod": 8.0, "description": "A sun-baked square in the old town of Rhodes, ringed by noble mansions, arcades and market stalls.",
      "preview": ["extra", "Juderia_MapDesc", 128], "loading": ["extra", "Juderia_MapDesc", 128]},
@@ -51,7 +51,7 @@
    ]
   },
   "knights_hospital": {
-   "index": 5, "acr_forge": "DataPC_ACFE_Rhodes.forge", "slot": "AC2MP_Test_Spawn",
+   "index": 5, "acr_forge": "DataPC_ACFE_Rhodes.forge", "slot": "AC2MP_Test_Spawn", "name": "ACFE_KnightsHosp",
    "variants": [
     {"name_line": 334731, "tod": 17.0, "description": "The fortified hospital of the Knights of Rhodes, its arcaded courtyards surrounded by thick stone walls.",
      "preview": ["extra", "KnightHospital_MapDesc", 128], "loading": ["extra", "KnightHospital_MapDesc", 128]},
@@ -60,7 +60,7 @@
    ]
   },
   "souk": {
-   "index": 6, "acr_forge": "DataPC_ACFE_Souk.forge", "slot": "TMP_Toscany_AC2MP",
+   "index": 6, "acr_forge": "DataPC_ACFE_Souk.forge", "slot": "TMP_Toscany_AC2MP", "name": "ACFE_Souk",
    "variants": [
     {"name_line": 334846, "tod": 20.0, "description": "A labyrinth of covered market alleys, crowded stalls and sun-bleached rooftops.",
      "preview": ["extra", "Souk_MapDesc", 128], "loading": ["extra", "Souk_MapDesc", 128]},
@@ -69,7 +69,7 @@
    ]
   },
   "imperial": {
-   "index": 7, "acr_forge": "DataPC_ACFE_Imperial_dlc.forge", "slot": "TMP_Venise_AC2MP",
+   "index": 7, "acr_forge": "DataPC_ACFE_Imperial_dlc.forge", "slot": "TMP_Venise_AC2MP", "name": "ACFE_Imperial",
    "variants": [
     {"name_line": 338597, "tod": 12.0, "description": "The lavish courtyards and pavilions of the Sultan's palace, high above the Bosphorus.",
      "preview": ["map", "Imperial_MapDesc", 128], "loading": ["map", "Imperial_alternative_MapDesc", 128]}

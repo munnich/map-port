@@ -2,7 +2,7 @@
 Input: the installed skins forges' unpatched originals (<forge>.pre_dyers, left by install_maps.sh; else the live
 file) -- skins_0002 there may be a community edit. Output: out/maps/skins/; nothing is installed.
 
-Chest Capture / Escort (convert.py --base -> out/maps/<key>/DataPC_<slot>.forge.awd): ACB looks per-map world data up
+Chest Capture / Escort (convert.py --base -> out/maps/<key>/DataPC_<name>.forge.awd): ACB looks per-map world data up
   only in OnlineMenuController's table (+0x5950), filled from the first loaded AdditionalWorldDataDLCElement -- the
   skins DLC packages (skins_0001: modes 2/7, skins_0002: modes 2/7/6). Which of the two loads first isn't fixed, so
   both get every map's AdditionalWorldData entries (dependency-free, like retail's) and a holder for its World: a copy
@@ -18,6 +18,7 @@ import argparse, copy, json, os, shutil, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from convert import ACB, ACB_T, HERE, Game, create_entry, idb, load_forge, name_hash, repack, u32, walk
 from anvilforge.fastload import Codec, Obj
+from patch_bootstrap import map_name
 
 FORGES = ("DataPC_skins_0001_00000002_dlc.forge", "DataPC_skins_0002_00000004_dlc.forge")
 MENU_FORGE = FORGES[0]
@@ -27,7 +28,7 @@ CFG = json.load(open(os.path.join(HERE, "maps.json")))
 def map_dirs(key):
     m = CFG["maps"][key]
     d = os.path.join(HERE, "out", "maps", key)
-    return os.path.join(d, f"DataPC_{m['slot'][:19]}.forge.awd"), os.path.join(d, "menu")
+    return os.path.join(d, f"DataPC_{map_name(m)}.forge.awd"), os.path.join(d, "menu")
 
 
 def add_world_data(files, acb, meta, holder_ids, tag):

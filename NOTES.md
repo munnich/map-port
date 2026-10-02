@@ -380,5 +380,32 @@ raised to spawn reach + 70 m (<= 255). Ids from slot + 0x10300. Results: Souk (1
   specs (null EntityBuilder, like most ACB MP specs) so NPCs spawn in the group; plus San Marco's static-group
   InterestZone trigger (pulls passing NPCs in). Confirmed in-game (Dyers): groups spawn populated.
 - verify_maps also flags objects that reuse an object id internally (a copied TriggerZone once kept its source's).
-- Still open: chase breakers (gates). ACB has them on every map, but not as ACR's ChaseBreakerComponent -- the
-  ACB grids (AC2MP_VEN_Grid_ChaseBreaker_01a) checked so far looked static; needs a closer look.
+- Chase breakers: see "Chase breakers" below (ACB runs them as a Scene).
+
+## Map forges named DataPC_ACFE_<map>.forge (2026-10-02)
+
+Each map still takes over an unused LoadInfo World's id (maps.json `slot`), but `patch_bootstrap.py` renames that
+LoadInfo entry's FileName in DataPC.forge ("Game Bootstrap Settings") to maps.json `name` (`ACFE_<map>`, at most 19
+chars -- GetWorldAlternateSourcePrefixName copies it into char[20]), so the game loads `multi/DataPC_ACFE_<map>.forge`.
+`convert.py --base <slot> --name <name>` names the World and the output after it. Output `out/maps/DataPC.forge`
+(input: the installed DataPC.forge, or its `.pre_acfe` original once installed); it reads the result back and checks
+all 580 entries + the 1271 LoadInfo rows are unchanged except the 8 FileNames. `install_maps.sh` installs it
+(original kept as `DataPC.forge.pre_acfe`, restored by uninstall) and removes old slot-named map forges. Every player
+now needs the edited DataPC.forge too.
+
+## Chase breakers = a Scene in ACB (2026-10-02)
+
+ACB's chase breakers (San Marco `AC2MP_GEN_Chasebreaker_door_34_Group_*`, `AC2MP_GEN_Door_chasebreaker_36_Group_*`)
+are EntityGroups: leaves (Visual, IsStatic 0) + a collision blocker (InertComponent, Active 0 at rest) + components
+SoundEmitter, **Scene**, TriggerComponent. Trigger (player passing, not in conflict) -> ActivateEvent Scene on +
+ChaseBreakerEvent + ActivateEvent TriggerComponent off. Scene: phase 1 leaves BlendPosClip +-90 deg (0.3 s) + blocker on
++ slam sound; NothingClip hold; phase 3 leaves back + blocker off (delay) + reopen sound; then Scene off + trigger on.
+ACR has the same groups (same assets for the BUC doors; Rhodes doors/railings/loggias are ACR-only assets) but keeps
+the animation in the ACR-only ChaseBreakerComponent (per element ClosingClip/OpeningClip, ClosureTime 6 s) -> stripped
+-> dead doors. Rest pose is open in both; ACR ClosingClip == ACB phase 1, OpeningClip == phase 3.
+`find_chase_breakers` (pre-strip) records each group's elements; `add_chase_breakers` builds the Scene from San
+Marco's door_34 one: an EntityActor per ACR leaf with the leaf's own rotations, blocker ActivateClips from ACR's, ACB
+timing/sounds/trigger conditions+events; trigger keeps ACR's zone (ACR group pivots differ) and ACR's ChaseBreakerType;
+group EntityDescriptor -> 0 like ACB's. Fresh ids from slot + 0x28000, all Scene Ptr links rewired. verify_maps flags
+a chase-breaker trigger without a Scene. Counts: Dyers 36, Antioch 37, Galata 24, Jerusalem 22, Ippokratous 19,
+Knights Hospital 42, Souk 15, Imperial 28.

@@ -985,7 +985,7 @@ def _template_components(conv, acb_dir, template):
     forge, name, types = template
     for e, subs, _d in forge_items(os.path.join(acb_dir, forge)):
         for ext, n, uid, p in subs:
-            if n == name and ACB_T.name_of(ext) == "Entity":
+            if n == name and ACB_T.name_of(ext) in ("Entity", "EntityGroup"):
                 o = conv.acb.decode(p).obj
                 comps = [c for c in o.fields["Components"]
                          if getattr(c, "obj", None) is not None and ACB_T.name_of(c.obj.type_hash) in types]
@@ -1053,6 +1053,161 @@ def add_static_group_triggers(conv, files, acb_dir):
         del conv._next_id
     else:
         conv._next_id = saved
+
+# ACB's chase breaker doors: San Marco's door_34 group (2 leaves + collision blocker) -- its Scene is the template
+CHASE_BREAKER_TEMPLATE = ("DataPC_AC2MP_SanMarco.forge", "AC2MP_GEN_Chasebreaker_door_34_Group_001",
+                          ("Scene", "TriggerComponent"))
+
+
+def find_chase_breakers(conv):
+    """Before encode_all strips it: ACR's chase breakers (doors / railings / loggias that slam shut behind a chased
+    player) keep their animation in an ACR-only ChaseBreakerComponent -- per element (a leaf, the collision blocker,
+    the group's sound) an OpeningClip and a ClosingClip. Note them per group: (element id, closing clip, opening
+    clip). At rest the leaves are open and the blocker inactive in both games; ACR's ClosingClip is ACB's first
+    scene phase (slam sound, blocker on), its OpeningClip the reopening."""
+    import copy
+    breakers = {}
+    for uid, t in conv.trees.items():
+        if ACR.name_of(t.obj.type_hash) not in ("Entity", "EntityGroup"):
+            continue
+        for c in t.obj.fields.get("Components", []):
+            o = getattr(c, "obj", None)
+            if o is None or ACR.name_of(o.type_hash) != "ChaseBreakerComponent":
+                continue
+            els = []
+            for d in o.fields["Doors"]:
+                d = d.obj if isinstance(d, Ptr) else d
+                close, opn = (d.fields[k][0] for k in ("ClosingClip", "OpeningClip"))
+                els.append((u32(d.fields["Element"].id), copy.deepcopy(close.obj if isinstance(close, Ptr) else close),
+                            copy.deepcopy(opn.obj if isinstance(opn, Ptr) else opn)))
+            types = {}  # ChaseBreakerEventSeed Action -> Type (doors / platform / ...; same enum in ACB)
+            for tc in t.obj.fields["Components"]:
+                for so in walk(tc.obj) if getattr(tc, "obj", None) is not None else ():
+                    if ACR.name_of(so.type_hash) == "ChaseBreakerEventSeed":
+                        types[u32(so.fields["Action"])] = so.fields["Type"]
+            breakers[uid] = (els, types)
+    conv.chase_breakers = breakers
+    conv.r.add("chase breakers: ACR ChaseBreakerComponent animations captured", n=len(breakers))
+
+
+def add_chase_breakers(conv, files, acb_dir):
+    """ACB drives a chase breaker with a Scene (San Marco AC2MP_GEN_Chasebreaker_door_*): its TriggerComponent
+    (player passing through, not in conflict) starts the Scene and disables itself; the Scene closes the leaves
+    (BlendPosClip 0.3 s) + activates the blocker's InertComponent + slam sound, waits 4 s, reopens (blocker off
+    after 0.4 s) + sound, then deactivates the Scene and re-enables the trigger. Build that per ACR group from San
+    Marco's: one EntityActor per ACR leaf with the leaf's own rotations (the Rhodes doors / railings / loggias aren't
+    ACB assets), the blocker clips from ACR's, everything else (timing, sounds, trigger conditions/events) ACB's.
+    The trigger keeps ACR's zone (the groups' pivots differ from San Marco's) and ACR's ChaseBreakerType."""
+    import copy
+    if not conv.chase_breakers:
+        return
+    saved = getattr(conv, "_next_id", None)
+    conv._next_id = conv.slot_world_id + 0x28000
+    tpl_group, tpl = _template_components(conv, acb_dir, CHASE_BREAKER_TEMPLATE)
+    tpl_scene = next(c.obj for c in tpl if ACB_T.name_of(c.obj.type_hash) == "Scene")
+    tpl_trig = next(c for c in tpl if ACB_T.name_of(c.obj.type_hash) == "TriggerComponent")
+    tn = lambda o: ACB_T.name_of(o.type_hash)
+    ob = lambda v: v.obj if isinstance(v, (Ptr, Ref)) else v
+    done, unknown = 0, Counter()
+    for df in files.values():
+        for sub in df.subs:
+            if ACB_T.name_of(sub[0]) not in ("Entity", "EntityGroup"):
+                continue
+            uid = derive_uid_and_ext(sub[2], True)[0]
+            if uid not in conv.chase_breakers:
+                continue
+            els, types = conv.chase_breakers[uid]
+            root = conv.acb.decode(sub[2])
+            scene = copy.deepcopy(tpl_scene)
+            acts = [ob(a) for a in scene.fields["Actors"]]  # logic, one EntityActor per leaf, sound
+            logic, ent_tpl, sound = acts[0], acts[1], acts[-1]
+            lc = [ob(c) for c in logic.fields["Clips"]]       # close blocker, wait, reopen blocker, scene off, trigger on
+            sc = [ob(c) for c in sound.fields["Clips"]]       # slam, reopen
+            phase1, phase3, logic1, logic3, actors = [sc[0]], [sc[1]], [], [], []
+            for eid, close, opn in els:
+                kind = tn(close)
+                if kind == "BlendPosClip":
+                    a = copy.deepcopy(ent_tpl)
+                    a.fields["ControlledEntity"] = Handle(0, idb(eid))
+                    for clip, src in zip((ob(c) for c in a.fields["Clips"]), (close, opn)):
+                        for k in ("BlendPosition", "BlendRotation", "TargetType", "TargetPosition", "TargetRotation"):
+                            clip.fields[k] = src.fields[k]
+                    actors.append(a)
+                    c1, c3 = (ob(c) for c in a.fields["Clips"])
+                    phase1.append(c1), phase3.append(c3)
+                elif kind == "ActivateClip":
+                    for lst, proto, src in ((logic1, lc[0], close), (logic3, lc[2], opn)):
+                        clip = copy.deepcopy(proto)
+                        clip.fields["Entity"] = Handle(0, idb(eid))
+                        for k in ("Action", "AffectedComponentType"):
+                            ob(clip.fields["Action"]).fields[k] = ob(src.fields["Action"]).fields[k]
+                        lst.append(clip)
+                elif kind != "SoundPlayClip":  # the group's own sound: ACB's slam / reopen sounds
+                    unknown[kind] += 1
+            phase1 += logic1
+            phase3 += logic3
+            ends = [lc[3], lc[4]]
+            logic.fields["Clips"] = [Ptr(4, None, c) for c in logic1 + [lc[1]] + logic3 + ends]
+            scene.fields["Actors"] = [Ptr(0, None, a) for a in [logic] + actors + [sound]]
+            # fresh ids, then rewire every internal link
+            for o in walk(scene):
+                if u32(o.id):
+                    o.id = idb(conv.alloc_id())
+            lk = lambda st, o: Ptr(st, bytes(o.id))
+            cps = [scene.fields["StartCheckpoint"]] + [ob(c) for c in scene.fields["AdditionalCheckPoints"]]
+            for a in scene.fields["Actors"]:
+                a = ob(a)
+                a.fields["ParentScene"] = lk(5, scene)
+                for c in a.fields["Clips"]:
+                    ob(c).fields["ControlledActor"] = lk(2, a)
+                    ob(c).fields["ParentScene"] = lk(5, scene)
+            for o in walk(scene):
+                if tn(o) == "SceneOutput":
+                    o.fields["ParentScene"] = lk(5, scene)
+            for i, clips in enumerate((phase1, [lc[1]], phase3, ends)):
+                for c in clips:
+                    c.fields["StartPoint"], c.fields["EndPoint"] = lk(5, cps[i]), lk(5, cps[i + 1])
+                cps[i].fields["PostClips"] = [lk(5, c) for c in clips]
+                cps[i + 1].fields["PreClips"] = [lk(5, c) for c in clips]
+            for i, cp in enumerate(cps):
+                cp.fields["Prev"] = lk(5, cps[i - 1]) if i else Ptr(3)
+                cp.fields["Next"] = lk(5, cps[i + 1]) if i + 1 < len(cps) else Ptr(3)
+            cps[0].fields["PreClips"] = []
+            cps[-1].fields["PostClips"] = []
+
+            trig = copy.deepcopy(tpl_trig)
+            for o in walk(trig.obj):
+                if u32(o.id):
+                    o.id = idb(conv.alloc_id())
+            comps = root.obj.fields["Components"]
+            old_trig = [c for c in comps if getattr(c, "obj", None) is not None and tn(c.obj) == "TriggerComponent"]
+            if old_trig:  # ACR's zone fits ACR's group pivot
+                ob(trig.obj.fields["Settings"]).fields["Zone"] = ob(old_trig[0].obj.fields["Settings"]).fields["Zone"]
+            for o in walk(trig.obj):
+                if tn(o) == "ChaseBreakerEventSeed" and u32(o.fields["Action"]) in types:
+                    o.fields["Type"] = types[u32(o.fields["Action"])]
+            for top in (scene, trig.obj):
+                for o in walk(top):
+                    for k, v in list(o.fields.items()):
+                        if isinstance(v, Handle) and u32(v.id) == tpl_group:
+                            o.fields[k] = Handle(v.tag, idb(uid))
+            keep = [c for c in comps if c not in old_trig]
+            root.obj.fields["Components"] = keep[:1] + [Ptr(4, None, scene), trig] + keep[1:]
+            ed = root.obj.fields.get("EntityDescriptor")
+            if isinstance(ed, Obj):  # ACB's door groups carry no descriptor (the leaves do: 3/0x18, as in ACR)
+                for k in ed.fields:
+                    if k in ("DescriptorType", "SubDescriptorType"):
+                        ed.fields[k] = bytes(4)
+            sub[2] = conv.acb.encode(root)
+            done += 1
+    if saved is None:
+        del conv._next_id
+    else:
+        conv._next_id = saved
+    conv.r.add("chase breakers: ACB Scene + trigger added (ChaseBreakerComponent replaced)", n=done)
+    for k, n in unknown.items():
+        conv.r.add(f"chase breakers: element clip type not converted: {k}", n=n)
+
 
 def add_reference_deps(conv, files, slot_forge):
     """Make objects this map references loadable the way retail maps do. At runtime only the map's own forge and
@@ -1364,6 +1519,8 @@ def main():
     ap.add_argument("--base", default=None,
                     help="non-DLC map instead: GameBootstrap LoadInfo world name to take over (bootstrap_worlds.json), "
                          "e.g. AC2MP_ludotest; out_forge must then be named DataPC_<name>.forge")
+    ap.add_argument("--name", default=None, help="--base: the name the slot's LoadInfo entry is renamed to "
+                    "(patch_bootstrap.py; default: keep the slot's name)")
     ap.add_argument("--donor", default="AC2MP_SanMarco", help="--base: base map giving sound bank, MP messages, MetaFile")
     ap.add_argument("--work", default=None)
     ap.add_argument("--remap-acfe-templates", action="store_true",
@@ -1372,9 +1529,10 @@ def main():
     if args.base:
         args.slot = None
         base_id = json.load(open(os.path.join(HERE, "bootstrap_worlds.json")))[args.base]
-        want = f"DataPC_{args.base[:19]}.forge"  # GetWorldAlternateSourcePrefixName copies the name into char[20]
+        args.name = args.name or args.base
+        want = f"DataPC_{args.name[:19]}.forge"  # GetWorldAlternateSourcePrefixName copies the name into char[20]
         if os.path.basename(args.out_forge) != want:
-            ap.error(f"--base {args.base}: the game will look for {want}")
+            ap.error(f"--base {args.base} --name {args.name}: the game will look for {want}")
     ref_forge = f"DataPC_{args.slot}_dlc.forge" if args.slot else f"DataPC_{args.donor}.forge"
 
     r = Report()
@@ -1385,6 +1543,7 @@ def main():
     entries, files = load_forge(args.acr_forge, os.path.join(work, "src"), Game.REVELATIONS)
     conv.decode_all(files)
     find_static_groups(conv)
+    find_chase_breakers(conv)
     conv.capture_world_extras()
     conv.remap_layers()
     conv.remap_templates(args.remap_acfe_templates)
@@ -1396,7 +1555,7 @@ def main():
         s_entries = conv.register_slot(files, args.acb_multi_dir, args.slot, work)
         conv.override_slot_world_data(files, args.acb_multi_dir)
     else:
-        s_entries = conv.register_base(files, args.acb_multi_dir, args.base, base_id, args.donor, work)
+        s_entries = conv.register_base(files, args.acb_multi_dir, args.name, base_id, args.donor, work)
     add_mp_message_scene(conv, files, args.acb_multi_dir, ref_forge)
     add_reference_deps(conv, files, ref_forge)
     vendor_dependencies(files, args.acb_multi_dir, conv.acb_idx, r)
@@ -1406,6 +1565,7 @@ def main():
     renumber_object(conv, files, conv.world_id, conv.slot_world_id)
     add_grid_anchor(conv, files)
     add_static_group_triggers(conv, files, args.acb_multi_dir)
+    add_chase_breakers(conv, files, args.acb_multi_dir)
     if args.base:
         conv.base_world_data(args.out_forge, conv.donor_world_id)
 

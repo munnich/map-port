@@ -5,13 +5,14 @@ Per map: its forge is named after its LoadInfo slot and its World has that slot'
 World whose mode-2/7 world data entries exist in that forge; every name/description line is in every text package of
 both forges (only the top-priority collection is read); every menu image is in skins_0001. In the server XML: one
 UnlockableMap per variant with exactly the menu.json lines, images, World and visibility. Per map also: no MeshShape
-keeps ACR's MOPP, the crowd blob is ACB's 200 m, no object is filtered only on layers ACB can't resolve (=> loaded in every mode)."""
+keeps ACR's MOPP, the crowd blob is ACB's 200 m, no object is filtered only on layers ACB can't resolve (=> loaded in every mode), every chase breaker has its Scene."""
 import json, os, pickle, struct, sys
 import xml.etree.ElementTree as ET
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from analyze import forge_items
 from convert import ACB_T, HERE, u32, walk
 from anvilforge.fastload import Codec
+from patch_bootstrap import map_name
 
 CFG = json.load(open(os.path.join(HERE, "maps.json")))
 GLOBAL_LAYERS = {i for i, v in pickle.load(open(os.path.join(HERE, "acb_multi_idx.pkl"), "rb")).items()
@@ -28,7 +29,7 @@ def problem(msg):
 
 
 keys = sys.argv[1:] or [k for k, m in CFG["maps"].items()
-                        if os.path.exists(os.path.join(HERE, "out", "maps", k, f"DataPC_{m['slot'][:19]}.forge"))]
+                        if os.path.exists(os.path.join(HERE, "out", "maps", k, f"DataPC_{map_name(m)}.forge"))]
 worlds = json.load(open(os.path.join(HERE, "bootstrap_worlds.json")))
 menus, awds = {}, {}
 for k in keys:
@@ -36,9 +37,9 @@ for k in keys:
     d = os.path.join(HERE, "out", "maps", k)
     wid = worlds[m["slot"]]
     menus[k] = json.load(open(os.path.join(d, "menu", "menu.json")))
-    awds[k] = json.load(open(os.path.join(d, f"DataPC_{m['slot'][:19]}.forge.awd", "awd.json")))
-    types, w, mopp5, deadfilter, dupids = {}, None, 0, [], []
-    for e, subs, _d in forge_items(os.path.join(d, f"DataPC_{m['slot'][:19]}.forge")):
+    awds[k] = json.load(open(os.path.join(d, f"DataPC_{map_name(m)}.forge.awd", "awd.json")))
+    types, w, mopp5, deadfilter, dupids, cb, cb_dead = {}, None, 0, [], [], 0, []
+    for e, subs, _d in forge_items(os.path.join(d, f"DataPC_{map_name(m)}.forge")):
         for ext, n, uid, p in subs:
             t = ACB_T.name_of(ext) if ext != "ERR" else "ERR"
             types[t] = types.get(t, 0) + 1
@@ -55,6 +56,11 @@ for k in keys:
                     root = c.decode(p).obj
                 except Exception:
                     continue
+                if any(ACB_T.name_of(o.type_hash) == "ChaseBreakerEventSeed" for o in walk(root)):
+                    cb += 1  # ACB runs a chase breaker as a Scene started by its trigger (convert.add_chase_breakers)
+                    if not any(getattr(x, "obj", None) is not None and ACB_T.name_of(x.obj.type_hash) == "Scene"
+                               for x in root.fields["Components"]):
+                        cb_dead.append(n)
                 seen = set()
                 for o in walk(root):
                     oid = u32(o.id)
@@ -67,7 +73,9 @@ for k in keys:
                         layers = {u32(a.fields["Layer"].id) for a in dlf.fields["LayerActions"]}
                         if not layers & GLOBAL_LAYERS:
                             deadfilter.append(n)
-    print(f"{k}: World {w[0]:#x} (slot {m['slot']} {wid:#x}), {types.get('MeshShape', 0)} MeshShapes")
+    print(f"{k}: World {w[0]:#x} (slot {m['slot']} {wid:#x}), {types.get('MeshShape', 0)} MeshShapes, {cb} chase breakers")
+    if cb_dead:
+        problem(f"{k}: {len(cb_dead)} chase breakers without a Scene (won't close): {cb_dead[:5]}")
     if mopp5:
         problem(f"{k}: {mopp5} MeshShapes keep ACR's MOPP (MoppCodeVersionNumber 5)")
     if dupids:
