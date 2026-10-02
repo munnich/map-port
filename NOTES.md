@@ -362,3 +362,23 @@ Fix (convert.add_grid_anchor, runs for maps whose active-spawn centroid is >30 m
 with the World before any cell request; World.DefaultTransitionPortal -> the portal; every LoadingRangeTable byte
 raised to spawn reach + 70 m (<= 255). Ids from slot + 0x10300. Results: Souk (10,-118) r 132, Knights Hospital
 (1,147) r 156, Ippokratous (158,39) r 134. Souk + Knights Hospital confirmed working in-game.
+
+## Crowd blob, benches, blend groups (2026-10-02)
+
+- Crowd: the World's BlobSettings in ACR MP maps are 20 m blob / 45 m unspawn / 100 NPCs / spread 39 (ACB uses
+  that only for its Whiteroom tutorial); every ACB MP map has 200 / 600 (450 on 2 DLC maps) / 150 / 78.
+  patch_fields sets the ACB values; verify_maps checks BlobSize 200.
+- Benches: ACB bench = RestObjectAttributeComponent (sit spots, same as ACR's) + AIComponent logic OLNetRestObject
+  (player sits/blends) + TriggerComponent with RestOnBenchEventSeed (crowd NPCs sit 10-20 s) + MapMarkerComponent
+  (type 8). ACR's are OLMPRestObject + a GameplayCoordinator running GcLMPRestObject (both MP-only, stripped).
+  find_static_groups retypes OLMPRestObject -> OLNetRestObject (neither serializes a field); add_static_group_
+  triggers copies San Marco's AC2MP_Don_Bench_01A_021 trigger + marker (fresh ids from slot + 0x20000, handles to
+  the template entity -> ours) in place of the dead coordinator. Confirmed in-game (Dyers).
+- Static blend groups / merchants: ACR's GcLMPCivilianSocialize = ACB's GcLCivilianSocialize + 6 MP-only fields
+  (ACB merchant groups run GcLCivilianSocialize in a GameplayCoordinatorComponent next to a TriggerComponent).
+  Retyped (MPCivilianSocializeDataList/-Data -> CivilianSocializeDataList/-Data), keeping the group's own spawn
+  specs (null EntityBuilder, like most ACB MP specs) so NPCs spawn in the group; plus San Marco's static-group
+  InterestZone trigger (pulls passing NPCs in). Confirmed in-game (Dyers): groups spawn populated.
+- verify_maps also flags objects that reuse an object id internally (a copied TriggerZone once kept its source's).
+- Still open: chase breakers (gates). ACB has them on every map, but not as ACR's ChaseBreakerComponent -- the
+  ACB grids (AC2MP_VEN_Grid_ChaseBreaker_01a) checked so far looked static; needs a closer look.

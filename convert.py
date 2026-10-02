@@ -33,6 +33,7 @@ import json
 import os
 import pickle
 import shutil
+import struct
 import sys
 import tempfile
 from collections import Counter, defaultdict
@@ -520,6 +521,13 @@ class Converter:
                 # different compiler (159/173 of the shapes both games ship differ) and leave collision holes in
                 # ACB (fell through Souk's ground, walked through Rhodes' buildings), so let ACB rebuild them all.
                 o.fields["MoppCodeVersionNumber"] = idb(0)
+            if t == "BlobSettings":
+                # the World's crowd blob: ACR MP maps ship 20 m / unspawn 45 m / 100 NPCs / spread 39 (ACB uses
+                # that only for its Whiteroom tutorial); every ACB MP map has 200 / 600 / 150 / 78
+                o.fields["BlobSize"] = struct.pack("<f", 200.0)
+                o.fields["UnspawnFOVDistance"] = struct.pack("<f", 600.0)
+                o.fields["CrowdMaxNumNPCs"] = idb(150)
+                o.fields["BlobSpreadingSpeed"] = idb(78)
             if t in ("Mesh", "TextureMap") and "UserCategory" in o.fields:
                 o.fields["UserCategory"] = idb(0)
 
@@ -933,6 +941,119 @@ def add_grid_anchor(conv, files):
                     f"(spawn reach {reach:.0f} m, {len(spawns)} spawns)")
 
 
+# ACB objects whose behaviour components we transplant onto the ACR objects whose MP-only logic types get stripped
+STATIC_GROUP_TEMPLATE = ("DataPC_AC2MP_SanMarco.forge", "AC2MP_GEN_Static_Group_141", ("TriggerComponent",))
+BENCH_TEMPLATE = ("DataPC_AC2MP_SanMarco.forge", "AC2MP_Don_Bench_01A_021", ("TriggerComponent", "MapMarkerComponent"))
+
+
+def find_static_groups(conv):
+    """Before encode_all strips ACR's MP-only logic types, note which entities used them: static blend groups /
+    merchants (GcLMPCivilianSocialize) and benches (GcLMPRestObject / OLMPRestObject). A bench's AIComponent logic
+    OLMPRestObject becomes ACB's OLNetRestObject (neither serializes a field; ACB benches use it -- it is what lets a
+    player sit and blend)."""
+    net_rest = name_hash(ACR, "OLNetRestObject")
+    social, social_data = name_hash(ACR, "GcLCivilianSocialize"), name_hash(ACR, "CivilianSocializeData")
+    groups, benches, retyped, social_n = set(), set(), 0, 0
+    for uid, t in conv.trees.items():
+        if ACR.name_of(t.obj.type_hash) != "Entity":
+            continue
+        for o in walk(t.obj):
+            tn = ACR.name_of(o.type_hash)
+            if tn == "GcLMPCivilianSocialize":
+                groups.add(uid)
+                # -> ACB's GcLCivilianSocialize (what ACB's merchant groups run): same fields minus 6 MP-only ones
+                # (dropped by the ACB re-encode); keeps the group's own spawn specs, so its NPCs spawn in place.
+                # Null EntityBuilders are normal there: most ACB MP spawn specs (CrowdDutyRegion) have none.
+                o.type_hash = social
+                data = o.fields.pop("MPCivilianSocializeDataList")
+                for d in data:
+                    (d.obj if isinstance(d, Ptr) else d).type_hash = social_data
+                o.fields = {"CivilianSocializeDataList": data, **o.fields}
+                social_n += 1
+            elif tn in ("GcLMPRestObject", "OLMPRestObject"):
+                benches.add(uid)
+                if tn == "OLMPRestObject":
+                    o.type_hash = net_rest
+                    retyped += 1
+    conv.static_groups, conv.benches = groups, benches
+    conv.r.add("benches: OLMPRestObject -> OLNetRestObject", n=retyped)
+    conv.r.add("static groups: GcLMPCivilianSocialize -> GcLCivilianSocialize", n=social_n)
+
+
+def _template_components(conv, acb_dir, template):
+    from analyze import forge_items
+    forge, name, types = template
+    for e, subs, _d in forge_items(os.path.join(acb_dir, forge)):
+        for ext, n, uid, p in subs:
+            if n == name and ACB_T.name_of(ext) == "Entity":
+                o = conv.acb.decode(p).obj
+                comps = [c for c in o.fields["Components"]
+                         if getattr(c, "obj", None) is not None and ACB_T.name_of(c.obj.type_hash) in types]
+                return u32(o.id), comps
+    raise SystemExit(f"template entity {name} not found in {forge}")
+
+
+def _transplant(conv, files, uids, tpl_entity, tpl_comps, label, plain_zone_list=False):
+    """Replace the dead (logic-less) GameplayCoordinatorComponents of the entities `uids` by copies of the template's
+    components: every object id in a copy is fresh, handles to the template entity point at ours."""
+    import copy
+    done = 0
+    for df in files.values():
+        for sub in df.subs:
+            if ACB_T.name_of(sub[0]) != "Entity":
+                continue
+            uid = derive_uid_and_ext(sub[2], True)[0]
+            if uid not in uids:
+                continue
+            root = conv.acb.decode(sub[2])
+            comps = root.obj.fields["Components"]
+            dead = [c for c in comps if getattr(c, "obj", None) is not None
+                    and ACB_T.name_of(c.obj.type_hash) == "GameplayCoordinatorComponent"
+                    and not any(ACB_T.name_of(o.type_hash).startswith("GcL") for o in walk(c.obj))]
+            new = []
+            for tpl in tpl_comps:
+                comp = copy.deepcopy(tpl)
+                if plain_zone_list and ACB_T.name_of(comp.obj.type_hash) == "TriggerComponent":
+                    # San Marco's static-group list zone is offset to its prop: use the plain zone (before ids)
+                    st = comp.obj.fields["Settings"]
+                    st.fields["ZoneList"] = [copy.deepcopy(st.fields["Zone"]) for _ in st.fields["ZoneList"][:1]]
+                remap = {tpl_entity: uid}
+                for o in walk(comp.obj):
+                    old = u32(o.id)
+                    if old:
+                        o.id = idb(conv.alloc_id())  # fresh per object, even where the template repeats an id
+                        remap.setdefault(old, u32(o.id))
+                for o in walk(comp.obj):
+                    for k, v in list(o.fields.items()):
+                        if isinstance(v, Handle) and u32(v.id) in remap:
+                            o.fields[k] = Handle(v.tag, idb(remap[u32(v.id)]))
+                new.append(comp)
+            root.obj.fields["Components"] = [c for c in comps if c not in dead] + new
+            sub[2] = conv.acb.encode(root)
+            done += 1
+    conv.r.add(label, n=done)
+
+
+def add_static_group_triggers(conv, files, acb_dir):
+    """ACR static blend groups / merchants run GcLMPCivilianSocialize and benches GcLMPRestObject in a
+    GameplayCoordinatorComponent; ACB has neither type (stripped -> a coordinator with no logic). ACB's own:
+    static groups (AC2MP_GEN_Static_Group_*) = a TriggerComponent whose InterestZoneEventSeed pulls 3-4 crowd NPCs
+    into an AttractorZone; benches (AC2MP_Don_Bench_*) = a TriggerComponent with a RestOnBenchEventSeed (crowd NPCs
+    sit 10-20 s) + a MapMarkerComponent (type 8) + AIComponent logic OLNetRestObject (see find_static_groups).
+    Copy San Marco's onto ours. Ids from slot + 0x20000.."""
+    saved = getattr(conv, "_next_id", None)
+    conv._next_id = conv.slot_world_id + 0x20000
+    e, comps = _template_components(conv, acb_dir, STATIC_GROUP_TEMPLATE)
+    _transplant(conv, files, conv.static_groups, e, comps,
+                "static groups: ACB InterestZone trigger added (GcLMPCivilianSocialize replaced)", plain_zone_list=True)
+    e, comps = _template_components(conv, acb_dir, BENCH_TEMPLATE)
+    _transplant(conv, files, conv.benches, e, comps,
+                "benches: ACB RestOnBench trigger + map marker added (GcLMPRestObject replaced)")
+    if saved is None:
+        del conv._next_id
+    else:
+        conv._next_id = saved
+
 def add_reference_deps(conv, files, slot_forge):
     """Make objects this map references loadable the way retail maps do. At runtime only the map's own forge and
     the global DataPC.forge are loaded, so a Ref / link to an object that lives only in another map's forge (e.g. a
@@ -1263,6 +1384,7 @@ def main():
 
     entries, files = load_forge(args.acr_forge, os.path.join(work, "src"), Game.REVELATIONS)
     conv.decode_all(files)
+    find_static_groups(conv)
     conv.capture_world_extras()
     conv.remap_layers()
     conv.remap_templates(args.remap_acfe_templates)
@@ -1283,6 +1405,7 @@ def main():
     # the map never finishes loading
     renumber_object(conv, files, conv.world_id, conv.slot_world_id)
     add_grid_anchor(conv, files)
+    add_static_group_triggers(conv, files, args.acb_multi_dir)
     if args.base:
         conv.base_world_data(args.out_forge, conv.donor_world_id)
 

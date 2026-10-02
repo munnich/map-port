@@ -5,8 +5,8 @@ Per map: its forge is named after its LoadInfo slot and its World has that slot'
 World whose mode-2/7 world data entries exist in that forge; every name/description line is in every text package of
 both forges (only the top-priority collection is read); every menu image is in skins_0001. In the server XML: one
 UnlockableMap per variant with exactly the menu.json lines, images, World and visibility. Per map also: no MeshShape
-keeps ACR's MOPP, no object is filtered only on layers ACB can't resolve (=> loaded in every mode)."""
-import json, os, pickle, sys
+keeps ACR's MOPP, the crowd blob is ACB's 200 m, no object is filtered only on layers ACB can't resolve (=> loaded in every mode)."""
+import json, os, pickle, struct, sys
 import xml.etree.ElementTree as ET
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from analyze import forge_items
@@ -37,14 +37,17 @@ for k in keys:
     wid = worlds[m["slot"]]
     menus[k] = json.load(open(os.path.join(d, "menu", "menu.json")))
     awds[k] = json.load(open(os.path.join(d, f"DataPC_{m['slot'][:19]}.forge.awd", "awd.json")))
-    types, w, mopp5, deadfilter = {}, None, 0, []
+    types, w, mopp5, deadfilter, dupids = {}, None, 0, [], []
     for e, subs, _d in forge_items(os.path.join(d, f"DataPC_{m['slot'][:19]}.forge")):
         for ext, n, uid, p in subs:
             t = ACB_T.name_of(ext) if ext != "ERR" else "ERR"
             types[t] = types.get(t, 0) + 1
             if t == "World":
-                w = (uid, [ACB_T.name_of(x.obj.type_hash) for x in c.decode(p).obj.fields["Components"]
+                wo = c.decode(p).obj
+                w = (uid, [ACB_T.name_of(x.obj.type_hash) for x in wo.fields["Components"]
                            if getattr(x, "obj", None) is not None])
+                blob = [struct.unpack("<f", o.fields["BlobSize"])[0] for o in walk(wo)
+                        if ACB_T.name_of(o.type_hash) == "BlobSettings"]
             elif t == "MeshShape":  # 5 = "trust ACR's MOPP" -> collision holes (see convert.patch_fields)
                 mopp5 += u32(c.decode(p).obj.fields["MoppCodeVersionNumber"]) == 5
             elif t in ("Entity", "EntityGroup"):  # a filter with no resolvable layer loads in every mode
@@ -52,6 +55,12 @@ for k in keys:
                     root = c.decode(p).obj
                 except Exception:
                     continue
+                seen = set()
+                for o in walk(root):
+                    oid = u32(o.id)
+                    if oid and oid in seen:
+                        dupids.append(n)
+                    seen.add(oid)
                 for o in walk(root):
                     dlf = o.fields.get("DataLayerFilter")
                     if dlf is not None and getattr(dlf, "fields", None) and dlf.fields["LayerActions"]:
@@ -61,6 +70,10 @@ for k in keys:
     print(f"{k}: World {w[0]:#x} (slot {m['slot']} {wid:#x}), {types.get('MeshShape', 0)} MeshShapes")
     if mopp5:
         problem(f"{k}: {mopp5} MeshShapes keep ACR's MOPP (MoppCodeVersionNumber 5)")
+    if dupids:
+        problem(f"{k}: {len(dupids)} objects reuse an object id internally: {dupids[:5]}")
+    if blob != [200.0]:
+        problem(f"{k}: crowd BlobSize {blob} (ACB MP maps: 200)")
     if deadfilter:
         problem(f"{k}: {len(deadfilter)} objects filtered only on layers ACB can't resolve (loaded in every mode): "
                 f"{deadfilter[:5]}")
