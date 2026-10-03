@@ -1209,6 +1209,98 @@ def add_chase_breakers(conv, files, acb_dir):
         conv.r.add(f"chase breakers: element clip type not converted: {k}", n=n)
 
 
+# ACB's attractor crowd region: NPCs spawn straight into static groups / benches in its cells (see add_attractor_spawning)
+ATTRACTOR_REGION_TEMPLATE = ("DataPC_AC2MP_SanMarco.forge", "SanMarco_crowd_solo")
+
+
+def add_attractor_spawning(conv, files, acb_dir):
+    """ACB fills static groups and benches from the crowd: every TriggerComponent with an AttractorEventSeed
+    (InterestZone / RestOnBench seeds) is a CrowdHerder static spawning zone, and UpdateStaticSpawningZones activates
+    one (need = its seed's NPC count) only when the crowd RegionCell under its AttractorZone belongs to a
+    CrowdDutyRegion with AttractorSpawning; PopulateAttractors then spawns NPCs right at those zones, and
+    Blob::SelectSpawnPositions uses only zone positions in such cells (no random crowd). Retail paints a dedicated
+    attractor region over its blend spots (SanMarco_crowd_solo, Alhambra CrowdRegion_Attractors*). ACR has none --
+    its groups spawn their own NPCs (GcLMPCivilianSocialize, MP-only) -- and nearly all of them sit in the map's
+    NoSpawn region (no CrowdComposition), so in ACB they never fill. Make every composition-less crowd region an
+    attractor region like San Marco's (density 0.02, BlobAreaMultiplier 0.01, one 100% solo-NPC fraction) and give
+    its cells the matching CrowdFractionInfo; random crowd stays off those cells as before. Ids from slot + 0x2e000."""
+    import copy
+    from analyze import forge_items
+    forge, name = ATTRACTOR_REGION_TEMPLATE
+    tpl = next((conv.acb.decode(p).obj for e, subs, _d in forge_items(os.path.join(acb_dir, forge))
+                for ext, n, uid, p in subs if n == name and ACB_T.name_of(ext) == "CrowdDutyRegion"), None)
+    if tpl is None:
+        raise SystemExit(f"{name} not found in {forge}")
+    saved = getattr(conv, "_next_id", None)
+    conv._next_id = conv.slot_world_id + 0x2e000
+
+    def fresh(obj):
+        obj = copy.deepcopy(obj)
+        for o in walk(obj):
+            if u32(o.id):
+                o.id = idb(conv.alloc_id())
+        return obj
+
+    regions, enc = {}, {}  # uid -> new payload (identical for every copy of a duplicated entry)
+    for df in files.values():
+        for sub in df.subs:
+            if ACB_T.name_of(sub[0]) != "CrowdDutyRegion":
+                continue
+            uid = derive_uid_and_ext(sub[2], True)[0]
+            if uid not in enc:
+                root = conv.acb.decode(sub[2])
+                F = root.obj.fields
+                if F["CrowdComposition"]:
+                    enc[uid] = None
+                    continue
+                for k in ("Density", "NightDensity", "BlobAreaMultiplier", "AttractorSpawning"):
+                    F[k] = tpl.fields[k]
+                F["CrowdComposition"] = [fresh(x) for x in tpl.fields["CrowdComposition"]]
+                regions[uid] = F["RegionName"].decode(errors="replace") if isinstance(F["RegionName"], bytes) \
+                    else str(F["RegionName"])
+                enc[uid] = conv.acb.encode(root)
+            if enc[uid] is not None:
+                sub[2] = enc[uid]
+    info = None  # a CrowdFractionInfo to copy (no serialized fields)
+    for df in files.values():
+        for sub in df.subs:
+            if info is None and ACB_T.name_of(sub[0]) == "RegionLayout":
+                for o in walk(conv.acb.decode(sub[2]).obj):
+                    if ACB_T.name_of(o.type_hash) == "CrowdFractionInfo":
+                        info = o
+                        break
+    cells, lenc = 0, {}
+    for df in files.values():
+        for sub in df.subs:
+            if ACB_T.name_of(sub[0]) != "RegionLayout":
+                continue
+            uid = derive_uid_and_ext(sub[2], True)[0]
+            if uid not in lenc:
+                root = conv.acb.decode(sub[2])
+                hit = 0
+                for cell in root.obj.fields["Cell"]:
+                    cell = getattr(cell, "obj", cell)
+                    ud = getattr(cell.fields.get("UserData"), "obj", None)
+                    if u32(cell.fields["CellData"].id) not in regions or ud is None:
+                        continue
+                    ud.fields["BlobAreaMultiplier"] = tpl.fields["BlobAreaMultiplier"]
+                    ud.fields["CrowdFractionInfo"] = [fresh(info) for _ in tpl.fields["CrowdComposition"]]
+                    hit += 1
+                lenc[uid] = conv.acb.encode(root) if hit else None
+                cells += hit
+            if lenc[uid] is not None:
+                sub[2] = lenc[uid]
+    if saved is None:
+        del conv._next_id
+    else:
+        conv._next_id = saved
+    for n in regions.values():
+        conv.r.add("crowd: NoSpawn region -> attractor region (static groups/benches fill)", note=n)
+    conv.r.add("crowd: attractor region cells", n=cells)
+    if regions and (info is None or not cells):
+        raise SystemExit("attractor spawning: no CrowdFractionInfo / cells for the attractor regions")
+
+
 def add_reference_deps(conv, files, slot_forge):
     """Make objects this map references loadable the way retail maps do. At runtime only the map's own forge and
     the global DataPC.forge are loaded, so a Ref / link to an object that lives only in another map's forge (e.g. a
@@ -1566,6 +1658,7 @@ def main():
     add_grid_anchor(conv, files)
     add_static_group_triggers(conv, files, args.acb_multi_dir)
     add_chase_breakers(conv, files, args.acb_multi_dir)
+    add_attractor_spawning(conv, files, args.acb_multi_dir)
     if args.base:
         conv.base_world_data(args.out_forge, conv.donor_world_id)
 

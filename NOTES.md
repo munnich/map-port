@@ -414,3 +414,27 @@ timing/sounds/trigger conditions+events; trigger keeps ACR's zone (ACR group piv
 group EntityDescriptor -> 0 like ACB's. Fresh ids from slot + 0x28000, all Scene Ptr links rewired. verify_maps flags
 a chase-breaker trigger without a Scene. Counts: Dyers 36, Antioch 37, Galata 24, Jerusalem 22, Ippokratous 19,
 Knights Hospital 42, Souk 15, Imperial 28.
+
+## Crowd: empty blend groups -> attractor spawning (2026-10-03)
+
+In-game: static groups / benches stayed nearly empty and the crowd felt thinner than on ACB maps. Data + RE (Mac
+acbmp_sf.exe):
+- ACB fills blend spots from the crowd, not per group. Every TriggerComponent with an AttractorEventSeed (the
+  InterestZone seeds of static groups, RestOnBench seeds) registers as a CrowdHerder static spawning zone
+  (AttractorEventSeed::AddToWorld -> CrowdHerder::AddAttractor). UpdateStaticSpawningZones looks up the crowd
+  RegionCell (RegionLayout type 1) under the zone's AttractorZone and activates it (need = the seed's NPC count)
+  only if that cell's CrowdDutyRegion has AttractorSpawning (byte +0x19). PopulateBlobRegions -> PopulateAttractors
+  runs first every spawn round; Blob::SelectSpawnPositions in an attractor cell uses only those zones' positions
+  (GetStaticSpawningZonesPositionsForCell) -- no random crowd there.
+- Retail: crowd cells partition the walkable area (disjoint triangulations, a NoSpawn cell for the rest) and every
+  MP map has a dedicated attractor region over its blend spots (SanMarco_crowd_solo: density 0.02, BlobAreaMultiplier
+  0.01, AttractorSpawning 1, one 100% solo-NPC fraction; Alhambra CrowdRegion_Attractors*). San Marco: 31/37 groups,
+  9/15 benches in it.
+- ACR has no attractor regions: its groups spawn their own 3-4 NPCs via GcLMPCivilianSocialize (MP-only; ACB's
+  GcLCivilianSocialize lacks Min/MaxUsedSpecs and every ACB use has a fixed EntityBuilder). On all 8 ported maps
+  nearly every group/bench sits in the NoSpawn region (Dyers 38/40 groups, 8/12 benches) -> never filled.
+- Expected crowd (sum of cell area x density): retail 115-225 with 25-40% from attractor cells; ported 81-145, 0%.
+Fix: `add_attractor_spawning` turns every composition-less crowd region (the NoSpawn one) into an attractor region
+copied from SanMarco_crowd_solo and gives its cells' CrowdDutyRegionUserData the matching BlobAreaMultiplier +
+CrowdFractionInfo. Normal crowd cells are untouched; the NoSpawn cell still gets no random crowd. Ids slot + 0x2e000.
+verify_maps flags a map without an attractor region. Dyers after: 38/40 groups + 8/12 benches in attractor cells.

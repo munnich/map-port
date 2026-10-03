@@ -5,7 +5,7 @@ Per map: its forge is named after its LoadInfo slot and its World has that slot'
 World whose mode-2/7 world data entries exist in that forge; every name/description line is in every text package of
 both forges (only the top-priority collection is read); every menu image is in skins_0001. In the server XML: one
 UnlockableMap per variant with exactly the menu.json lines, images, World and visibility. Per map also: no MeshShape
-keeps ACR's MOPP, the crowd blob is ACB's 200 m, no object is filtered only on layers ACB can't resolve (=> loaded in every mode), every chase breaker has its Scene."""
+keeps ACR's MOPP, the crowd blob is ACB's 200 m, no object is filtered only on layers ACB can't resolve (=> loaded in every mode), every chase breaker has its Scene, some crowd region has AttractorSpawning."""
 import json, os, pickle, struct, sys
 import xml.etree.ElementTree as ET
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -38,7 +38,7 @@ for k in keys:
     wid = worlds[m["slot"]]
     menus[k] = json.load(open(os.path.join(d, "menu", "menu.json")))
     awds[k] = json.load(open(os.path.join(d, f"DataPC_{map_name(m)}.forge.awd", "awd.json")))
-    types, w, mopp5, deadfilter, dupids, cb, cb_dead = {}, None, 0, [], [], 0, []
+    types, w, mopp5, deadfilter, dupids, cb, cb_dead, attr = {}, None, 0, [], [], 0, [], 0
     for e, subs, _d in forge_items(os.path.join(d, f"DataPC_{map_name(m)}.forge")):
         for ext, n, uid, p in subs:
             t = ACB_T.name_of(ext) if ext != "ERR" else "ERR"
@@ -49,6 +49,8 @@ for k in keys:
                            if getattr(x, "obj", None) is not None])
                 blob = [struct.unpack("<f", o.fields["BlobSize"])[0] for o in walk(wo)
                         if ACB_T.name_of(o.type_hash) == "BlobSettings"]
+            elif t == "CrowdDutyRegion":  # static groups / benches only fill in attractor regions
+                attr += u32(c.decode(p).obj.fields["AttractorSpawning"]) == 1
             elif t == "MeshShape":  # 5 = "trust ACR's MOPP" -> collision holes (see convert.patch_fields)
                 mopp5 += u32(c.decode(p).obj.fields["MoppCodeVersionNumber"]) == 5
             elif t in ("Entity", "EntityGroup"):  # a filter with no resolvable layer loads in every mode
@@ -73,7 +75,9 @@ for k in keys:
                         layers = {u32(a.fields["Layer"].id) for a in dlf.fields["LayerActions"]}
                         if not layers & GLOBAL_LAYERS:
                             deadfilter.append(n)
-    print(f"{k}: World {w[0]:#x} (slot {m['slot']} {wid:#x}), {types.get('MeshShape', 0)} MeshShapes, {cb} chase breakers")
+    print(f"{k}: World {w[0]:#x} (slot {m['slot']} {wid:#x}), {types.get('MeshShape', 0)} MeshShapes, {cb} chase breakers, {attr} attractor crowd regions")
+    if not attr:
+        problem(f"{k}: no attractor crowd region (static groups / benches stay empty, convert.add_attractor_spawning)")
     if cb_dead:
         problem(f"{k}: {len(cb_dead)} chase breakers without a Scene (won't close): {cb_dead[:5]}")
     if mopp5:
