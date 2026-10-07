@@ -941,6 +941,145 @@ def add_grid_anchor(conv, files):
                     f"(spawn reach {reach:.0f} m, {len(spawns)} spawns)")
 
 
+def _translation(o):
+    import struct
+    return struct.unpack_from("<3f", o.fields["GlobalMatrix"], 48)
+
+
+def _signed(v):
+    return int.from_bytes(v, "little", signed=True) if isinstance(v, (bytes, bytearray)) else int(v)
+
+
+def find_ctf_layout(conv):
+    """Before encode_all strips them: ACR's Artifact Assault (CTF_2) layout. ACB has no CTF types, so the
+    FlagComponent / CTFScoreZoneComponent entities and the CTF-layer spawn points never make it into the port; the
+    acb2 DLL runs the mode instead and needs their positions. Per team (FlagComponent / CTFScoreZoneComponent
+    TeamOwner): the artifact's home and the scoring zone (= the team's base). Also every spawn entity that only
+    loads with a CTF layer (block membership or a DataLayerFilter on it), for add_ctf_team_spawns. Result:
+    conv.ctf = {"flag": {team: pos}, "zone": {team: pos}, "spawns": [pos]} or None."""
+    flags, zones, spawns = {}, {}, []
+    wdlm = next((t for t in conv.trees.values() if ACR.name_of(t.obj.type_hash) == "WorldDataLayerManager"), None)
+    ctf_layers, in_ctf_blocks = set(), set()
+    if wdlm is not None:
+        for a in wdlm.obj.fields["LayersConfig"]:
+            layer, blk = u32(a.fields["Layer"].id), u32(a.fields["DataBlock"].id)
+            if "CTF" not in conv.layer_name(layer).upper():
+                continue
+            ctf_layers.add(layer)
+            b = conv.trees.get(blk)
+            if b is not None:
+                in_ctf_blocks |= {u32(x.id) for x in b.obj.fields["Objects"]}
+    for uid, t in conv.trees.items():
+        o = t.obj
+        if ACR.name_of(o.type_hash) != "Entity":
+            continue
+        comps = {ACR.name_of(c.obj.type_hash): c.obj for c in o.fields.get("Components", []) if getattr(c, "obj", None)}
+        for kind, out in (("FlagComponent", flags), ("CTFScoreZoneComponent", zones)):
+            if kind in comps:
+                team = _signed(comps[kind].fields["TeamOwner"])
+                if team in out:
+                    conv.r.add(f"ctf: second {kind} for team {team} ignored", note=conv.name_of(uid))
+                else:
+                    out[team] = _translation(o)
+        if "MultiSpawnPlayerComponent" in comps:
+            dlf = o.fields.get("DataLayerFilter")
+            filtered = dlf is not None and any(u32(a.fields["Layer"].id) in ctf_layers
+                                               for a in dlf.fields["LayerActions"])
+            if uid in in_ctf_blocks or filtered:
+                spawns.append(_translation(o))
+    if len(flags) != 2 or len(zones) != 2 or set(flags) != set(zones):
+        conv.ctf = None
+        conv.r.add("ctf: no complete Artifact Assault layout (2 flags + 2 scoring zones), none written",
+                   note=f"flag teams {sorted(flags)}, zone teams {sorted(zones)}")
+        return
+    conv.ctf = {"flag": flags, "zone": zones, "spawns": spawns}
+    for team in sorted(zones):
+        conv.r.add("ctf: base (scoring zone) / artifact home",
+                   note=f"team {team}: zone ({', '.join(f'{c:.2f}' for c in zones[team])}), "
+                        f"artifact ({', '.join(f'{c:.2f}' for c in flags[team])})")
+    conv.r.add("ctf: CTF-layer spawn points", n=len(spawns))
+
+
+def add_ctf_team_spawns(conv, files):
+    """ACB team modes start (and the acb2 Artifact Assault ruleset also respawns) players at the SpawnType-2 team
+    points of their TeamIndex. The ported ACR ones come from the standard-mode layers, nowhere near the CTF bases, so
+    move team 1's and team 2's onto the bases: team 1 = the lower TeamOwner. Targets: the CTF-layer spawn points
+    nearest each base (4 per team, what ACR itself spawns CTF teams on), else the always-loaded FFA (type 0) points
+    nearest it. Only positions change (GlobalMatrix translation, plus LocalMatrix when it is in world space); every
+    copy of an entity gets the same move."""
+    import math, struct
+    if not conv.ctf:
+        return
+    d = lambda a, b: math.hypot(a[0] - b[0], a[1] - b[1])  # noqa: E731
+    owners = sorted(conv.ctf["zone"])
+    bases = [conv.ctf["zone"][t] for t in owners]
+    never = NEVER_LAYER_ID
+    team_copies = {1: defaultdict(list), 2: defaultdict(list)}  # team -> uid -> [(df, i)]
+    ffa = []
+    for df in files.values():
+        for i, sub in enumerate(df.subs):
+            if ACB_T.name_of(sub[0]) != "Entity":
+                continue
+            try:
+                root = conv.acb.decode(sub[2])
+            except DecodeError:
+                continue
+            o = root.obj
+            msp = [c.obj for c in o.fields.get("Components", []) if getattr(c, "obj", None)
+                   and ACB_T.name_of(c.obj.type_hash) == "MultiSpawnPlayerComponent"]
+            if not msp:
+                continue
+            if any(u32(a.fields["Layer"].id) == never for a in o.fields["DataLayerFilter"].fields["LayerActions"]):
+                continue
+            kind = u32(msp[0].fields["SpawnType"])
+            if kind == 0 and not o.fields["DataLayerFilter"].fields["LayerActions"]:
+                ffa.append(_translation(o))
+            elif kind == 2:
+                team = msp[0].fields["TeamIndex"][0]
+                if team in team_copies:
+                    team_copies[team][u32(o.id)].append((df, i))
+    ffa = list(dict.fromkeys(ffa))
+    used = set()
+    for team, base in zip((1, 2), bases):
+        uids = sorted(team_copies[team])
+        if not uids:
+            conv.r.add("ctf: no team spawns to move", note=f"team {team}")
+            continue
+        ctf_pts = sorted((p for p in conv.ctf["spawns"] if d(p, base) <= min(d(p, b) for b in bases)),
+                         key=lambda p: d(p, base))
+        source = "CTF spawns" if len(ctf_pts) >= len(uids) else "nearest FFA spawns"
+        pool = ctf_pts if len(ctf_pts) >= len(uids) else sorted((p for p in ffa if p not in used), key=lambda p: d(p, base))
+        for uid, target in zip(uids, pool):
+            used.add(target)
+            for df, i in team_copies[team][uid]:
+                root = conv.acb.decode(df.subs[i][2])
+                old = _translation(root.obj)
+                gm = bytearray(root.obj.fields["GlobalMatrix"])
+                struct.pack_into("<3f", gm, 48, *target)
+                root.obj.fields["GlobalMatrix"] = bytes(gm)
+                lm = root.obj.fields.get("LocalMatrix")
+                if isinstance(lm, (bytes, bytearray)) and len(lm) >= 60 and all(
+                        abs(a - b) < 1e-3 for a, b in zip(struct.unpack_from("<3f", lm, 48), old)):
+                    lm = bytearray(lm)
+                    struct.pack_into("<3f", lm, 48, *target)
+                    root.obj.fields["LocalMatrix"] = bytes(lm)
+                df.subs[i][2] = conv.acb.encode(root)
+        conv.r.add("ctf: team spawns moved to the base", n=min(len(uids), len(pool)),
+                   note=f"team {team} (TeamOwner {owners[team - 1]}): {source}")
+
+
+def write_ctf_layout(conv, out_forge, map_name):
+    """<out>.ctf.json for build_maps.py, which turns every map's into acb2's artifact_assault.ini. map_name = what
+    GameInfo::GetMapName returns for the port (the World's LoadInfo name)."""
+    if not conv.ctf:
+        return
+    owners = sorted(conv.ctf["zone"])
+    data = {"map": map_name,
+            "base": [list(conv.ctf["zone"][t]) for t in owners],
+            "flag": [list(conv.ctf["flag"][t]) for t in owners]}
+    json.dump(data, open(out_forge + ".ctf.json", "w"), indent=1)
+
+
 # ACB objects whose behaviour components we transplant onto the ACR objects whose MP-only logic types get stripped
 STATIC_GROUP_TEMPLATE = ("DataPC_AC2MP_SanMarco.forge", "AC2MP_GEN_Static_Group_141", ("TriggerComponent",))
 BENCH_TEMPLATE = ("DataPC_AC2MP_SanMarco.forge", "AC2MP_Don_Bench_01A_021", ("TriggerComponent", "MapMarkerComponent"))
@@ -1636,6 +1775,7 @@ def main():
     conv.decode_all(files)
     find_static_groups(conv)
     find_chase_breakers(conv)
+    find_ctf_layout(conv)
     conv.capture_world_extras()
     conv.remap_layers()
     conv.remap_templates(args.remap_acfe_templates)
@@ -1656,6 +1796,7 @@ def main():
     # the map never finishes loading
     renumber_object(conv, files, conv.world_id, conv.slot_world_id)
     add_grid_anchor(conv, files)
+    add_ctf_team_spawns(conv, files)
     add_static_group_triggers(conv, files, args.acb_multi_dir)
     add_chase_breakers(conv, files, args.acb_multi_dir)
     add_attractor_spawning(conv, files, args.acb_multi_dir)
@@ -1690,6 +1831,7 @@ def main():
             added.append(e)
     repack(out_dir, args.out_forge, Game.BROTHERHOOD, original_entries=list(entries) + list(s_entries) + added,
            align_entries=True)
+    write_ctf_layout(conv, args.out_forge, args.name or args.slot)
     rep = r.text()
     open(args.out_forge + ".report.txt", "w").write(rep)
     print(rep)

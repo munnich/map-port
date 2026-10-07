@@ -10,7 +10,9 @@ Config: maps.json (one entry per ACR map: source forge, LoadInfo slot, menu vari
      is newer than it);
   4. cxb_maps.py: the menu entries of every built map into the server's mapmanagermulti.xml (rebuild the CXB from
      it with CXBTool afterwards);
-  5. verify_maps.py.
+  5. verify_maps.py;
+  6. out/maps/artifact_assault.ini: every built map's Artifact Assault layout (convert.py's <forge>.ctf.json) as
+     acb2 [Layout.<name>] sections -- goes next to patch.asi.
 Then ./install_maps.sh install."""
 import argparse, json, os, subprocess, sys
 from patch_bootstrap import map_name
@@ -58,6 +60,28 @@ def checks(key):
     print(f"  {key}: " + " | ".join(summary), flush=True)
 
 
+def write_artifact_assault_ini(keys):
+    """acb2's artifact_assault.ini (ACB-2.0-Patch src/artifact_assault.cpp): one [Layout.<name>] per map, named
+    after what GameInfo::GetMapName returns for it (the LoadInfo name), so no [Maps] alias is needed. Base = the
+    team's scoring zone, Flag = its artifact's home; team 1 = the lower ACR TeamOwner."""
+    lines = ["; Artifact Assault layouts of the ported ACR maps, from build_maps.py (ACR FlagComponent /",
+             "; CTFScoreZoneComponent positions). Merge into artifact_assault.ini next to patch.asi.", ""]
+    n = 0
+    for k in keys:
+        p = forge_path(k) + ".ctf.json"
+        if not os.path.exists(p):
+            print(f"  {k}: no Artifact Assault layout (see the report's 'ctf:' lines)")
+            continue
+        c = json.load(open(p))
+        fmt = lambda v: ",".join(f"{x:.2f}" for x in v)  # noqa: E731
+        lines += [f"[Layout.{c['map']}]", f"Base1={fmt(c['base'][0])}", f"Base2={fmt(c['base'][1])}",
+                  f"Flag1={fmt(c['flag'][0])}", f"Flag2={fmt(c['flag'][1])}", ""]
+        n += 1
+    out = os.path.join(HERE, "out", "maps", "artifact_assault.ini")
+    open(out, "w").write("\n".join(lines))
+    print(f"wrote {out} ({n} layouts)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("maps", nargs="*", help="map keys from maps.json (default: all)")
@@ -87,6 +111,7 @@ def main():
     if not args.no_xml:
         run([sys.executable, "cxb_maps.py", *built])
     run([sys.executable, "verify_maps.py", *built])
+    write_artifact_assault_ini(built)
     print(f"\nbuilt: {', '.join(built)}\nnext: ./install_maps.sh install; rebuild the CXB from {CFG['server_xml']}")
 
 
